@@ -1,17 +1,3 @@
-# Copyright 2025 Huawei Technologies Co., Ltd
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """
 Profiling utilities shared between KernelVerifier and LocalWorker.
 Contains methods for running msprof, nsys, and analyzing profiling data.
@@ -139,7 +125,7 @@ async def run_profile_scripts_and_collect_results(
             and isinstance(override_base_section.get("avg_us"), (int, float))
             and 0 < override_base_section["avg_us"] < float("inf")):
         base_section = override_base_section
-        logger.info(f"[{op_name}: {task_id}] 使用缓存的 baseline: "
+        logger.info(f"[{op_name}: {task_id}] Using Cache baseline: "
                     f"{base_section['avg_us']:.2f} us "
                     f"(per_shape len={len(base_section.get('per_case_us') or [])})")
     elif os.path.exists(os.path.join(verify_dir, f"profile_{op_name}_base.py")):
@@ -147,10 +133,10 @@ async def run_profile_scripts_and_collect_results(
             base_section = read_profile_result_from_json(
                 verify_dir, "base_profile_result.json")
         else:
-            logger.error(f"[{op_name}: {task_id}] 基准性能脚本执行失败")
+            logger.error(f"[{op_name}: {task_id}] Benchmark performance script execution failed")
     else:
-        logger.info(f"[{op_name}: {task_id}] 基准性能脚本不存在"
-                    f"（使用缓存 baseline 或跨后端场景），跳过 base profile")
+        logger.info(f"[{op_name}: {task_id}] Base Performance Script does not exist"
+                    f"(using caches) baseline Or cross.backendScene) Skip base profile")
 
     gen_section: Optional[Dict[str, Any]] = None
     if os.path.exists(os.path.join(verify_dir, f"profile_{op_name}_generation.py")):
@@ -158,10 +144,10 @@ async def run_profile_scripts_and_collect_results(
             gen_section = read_profile_result_from_json(
                 verify_dir, "generation_profile_result.json")
         else:
-            logger.error(f"[{op_name}: {task_id}] 生成代码性能脚本执行失败")
+            logger.error(f"[{op_name}: {task_id}] Failed to generate code performance scripts")
     else:
-        logger.info(f"[{op_name}: {task_id}] 生成代码性能脚本不存在，"
-                    "跳过 generation profile")
+        logger.info(f"[{op_name}: {task_id}] Generating code performance scripts doesn't exist."
+                    "Skipgeneration profile")
 
     base_avg = base_section["avg_us"] if base_section else float("inf")
     gen_avg = gen_section["avg_us"] if gen_section else float("inf")
@@ -175,16 +161,16 @@ async def run_profile_scripts_and_collect_results(
 def run_msprof(script_path: str, op_name: str = "", task_id: str = "0",
                timeout: Optional[int] = None,
                cancel_event=None) -> Tuple[bool, str, Optional[str]]:
-    """运行msprof性能分析
-    
+    """Run msprofprofiling
+
     Args:
-        script_path: Python脚本路径
-        op_name: 算子名称（用于日志）
-        task_id: 任务ID（用于日志）
-        timeout: 超时时间（秒）
-        
+        Script_path: Python script path
+        op_name: operator name (for logs)
+        task_id: task ID (for log)
+        Timeout: Timeout (sec)
+
     Returns:
-        (success, error_msg, prof_path): 是否成功，错误信息，prof数据路径
+        (success, error_msg, prof_path): Success, error message, prof data path
     """
     timeout = resolve_eval_timeout(timeout)
     try:
@@ -204,33 +190,33 @@ def run_msprof(script_path: str, op_name: str = "", task_id: str = "0",
                 if match:
                     return True, "", match.group(1).strip()
 
-        return False, "未找到数据保存路径", None
+        return False, "No data saving path found", None
     except Exception as e:
-        logger.error(f"[{task_id}:{op_name}] msprof执行错误: {e}")
-        return False, f"执行错误: {str(e)}", None
+        logger.error(f"[{task_id}:{op_name}] msprofExecute Error: {e}")
+        return False, f"Execute Error: {str(e)}", None
 
 
 def analyze_prof_data(prof_path: str, warmup_times: int, run_times: int, op_name: str = "", task_id: str = "0") -> Tuple[bool, str, float]:
-    """分析PROF数据
-    
+    """Analysis of PROF data
+
     Args:
-        prof_path: prof数据目录路径
-        warmup_times: 预热次数
-        run_times: 实际运行次数
-        op_name: 算子名称（用于日志）
-        task_id: 任务ID（用于日志）
-        
+        pof_path: pof data directory path
+        Warmup_times: number of preheats
+        Run_times: Number of times actually running
+        op_name: operator name (for logs)
+        task_id: task ID (for log)
+
     Returns:
-        (success, error_msg, avg_time_us): 是否成功，错误信息，平均时间（微秒）
+        (success, error_msg, avg_time_us): Success, error message, average time (microseconds)
     """
     try:
         csv_files = list(Path(prof_path).glob("mindstudio_profiler_output/op_summary_*.csv"))
         if not csv_files:
-            return False, "未找到CSV文件", 0.0
+            return False, "CSV file not found", 0.0
 
         df = pd.read_csv(csv_files[0])
 
-        # 移除特定的Op
+        # Remove a specific Op
         df_filtered = df[~df["Op Name"].str.contains("aclnnIsClose_IsCloseAiCpu_IsClose|aclnnAll_ReduceAll_ReduceAll",
                                                      regex=True, na=False)]
 
@@ -239,14 +225,14 @@ def analyze_prof_data(prof_path: str, warmup_times: int, run_times: int, op_name
         valid_ops = op_counts[op_counts == total_count]
 
         if len(valid_ops) == 0:
-            return False, "没有找到符合预期次数的Op", float('inf')
+            return False, "Op does not match the expected number", float('inf')
 
-        # 检查不匹配的Op
+        # Check for mismatch Ops
         invalid_ops = op_counts[op_counts != total_count]
         if len(invalid_ops) > 0:
-            logger.warning(f"[{task_id}:{op_name}] 发现{len(invalid_ops)}个Op次数不匹配")
+            logger.warning(f"[{task_id}:{op_name}] Found{len(invalid_ops)}individualOpNumber does not match")
 
-        # 计算平均时间
+        # Calculating average time
         df_valid = df_filtered[df_filtered["Op Name"].isin(valid_ops.index)]
         total_avg_time = 0.0
 
@@ -260,23 +246,23 @@ def analyze_prof_data(prof_path: str, warmup_times: int, run_times: int, op_name
         return True, "", total_avg_time
 
     except Exception as e:
-        logger.error(f"[{task_id}:{op_name}] 分析prof数据时出错: {e}")
-        return False, f"分析数据时出错: {str(e)}", float('inf')
+        logger.error(f"[{task_id}:{op_name}] AnalysisprofError while Data: {e}")
+        return False, f"Error parsing data: {str(e)}", float('inf')
 
 
 def run_nsys(script_path: str, op_name: str = "", task_id: str = "0",
              timeout: Optional[int] = None,
              cancel_event=None) -> Tuple[bool, str, Optional[str]]:
-    """运行nsys性能分析
-    
+    """Run nsysprofiling
+
     Args:
-        script_path: Python脚本路径
-        op_name: 算子名称（用于日志）
-        task_id: 任务ID（用于日志）
-        timeout: 超时时间（秒）
-        
+        Script_path: Python script path
+        op_name: operator name (for logs)
+        task_id: task ID (for log)
+        Timeout: Timeout (sec)
+
     Returns:
-        (success, error_msg, rep_path): 是否成功，错误信息，nsys报告文件路径
+        (success, error_msg, rep_path): Success, error message,nsys reports file path
     """
     timeout = resolve_eval_timeout(timeout)
     try:
@@ -297,38 +283,38 @@ def run_nsys(script_path: str, op_name: str = "", task_id: str = "0",
 
         if os.path.exists(report_path):
             return True, "", report_path
-        return False, "未找到nsys报告文件", None
+        return False, "nsys report file not found", None
     except Exception as e:
-        logger.error(f"[{task_id}:{op_name}] nsys执行错误: {e}")
-        return False, f"执行错误: {str(e)}", None
+        logger.error(f"[{task_id}:{op_name}] nsysExecute Error: {e}")
+        return False, f"Execute Error: {str(e)}", None
 
 
 def analyze_nsys_data(rep_path: str, warmup_times: int, run_times: int,
                       profile_type: str = "", op_name: str = "",
                       task_id: str = "0", cancel_event=None
                       ) -> Tuple[bool, str, float]:
-    """分析nsys生成的rep文件，返回平均耗时(us)
-    
+    """Analyze rep files generated by nsys, return average time (us)
+
     Args:
-        rep_path: nsys报告文件路径
-        warmup_times: 预热次数
-        run_times: 实际运行次数
-        profile_type: profile类型标识（用于CSV文件命名）
-        op_name: 算子名称（用于日志）
-        task_id: 任务ID（用于日志）
-        
+        Rep_path: nsys report file path
+        Warmup_times: number of preheats
+        Run_times: Number of times actually running
+        Profile_type: profile type identification (for CSV file naming)
+        op_name: operator name (for logs)
+        task_id: task ID (for log)
+
     Returns:
-        (success, error_msg, avg_time_us): 是否成功，错误信息，平均时间（微秒）
+        (success, error_msg, avg_time_us): Success, error message, average time (microseconds)
     """
     try:
         dir_plib = Path(rep_path).resolve().parent
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # 在CSV文件名中添加profile_type标识
+        # Add the profile_ type identifier to the CSV filename
         type_suffix = f"_{profile_type}" if profile_type else ""
         csv_base = f"nsys_report_{timestamp}{type_suffix}"
         csv_path = dir_plib / csv_base
-        
-        # 导出csv
+
+        # Export csv
         cmd = [
             "nsys",
             "stats",
@@ -355,51 +341,51 @@ def analyze_nsys_data(rep_path: str, warmup_times: int, run_times: int,
         csv_path = dir_plib / f"{csv_base}_gputrace.csv"
 
         if not os.path.exists(csv_path):
-            return False, "未生成csv文件", float('inf')
-            
+            return False, "No csv file generated", float('inf')
+
         df = pd.read_csv(csv_path)
-        
-        # 兼容不同nsys版本的列名
+
+        # Compatible with different nsys versions of listing
         name_col = None
         for col in df.columns:
             if col.lower() in ["name", "function name", "kernel name", "Name"]:
                 name_col = col
                 break
         if not name_col:
-            # 兜底找包含name的列
+            # Underground search for column with name
             for col in df.columns:
                 if "name" in col.lower():
                     name_col = col
                     break
-                    
+
         time_col = None
         for col in df.columns:
             if "time (ns)" in col.lower() or "average" in col.lower() or "duration" in col.lower():
                 time_col = col
                 break
-                
+
         if not name_col or not time_col:
-            return False, "未找到kernel名或耗时列", float('inf')
-            
+            return False, "kernel name or time line not found", float('inf')
+
         total_count = warmup_times + run_times
         op_counts = df[name_col].value_counts()
         valid_ops = op_counts[op_counts == total_count]
-        
+
         if len(valid_ops) == 0:
-            return False, "没有找到符合预期次数的kernel", float('inf')
-            
+            return False, "No kernel found to match the expected number", float('inf')
+
         df_valid = df[df[name_col].isin(valid_ops.index)]
         total_avg_time = 0.0
-        
+
         for op_name_iter in valid_ops.index:
             op_data = df_valid[df_valid[name_col] == op_name_iter][time_col].tolist()
             if len(op_data) > warmup_times:
                 valid_data = op_data[warmup_times:]
                 avg_time = sum(valid_data) / len(valid_data)
                 total_avg_time += avg_time  # timeunit us
-                
+
         return True, "", total_avg_time
-        
+
     except Exception as e:
-        logger.error(f"[{task_id}:{op_name}] 分析nsys数据时出错: {e}")
-        return False, f"分析nsys数据时出错: {str(e)}", float('inf')
+        logger.error(f"[{task_id}:{op_name}] AnalysisnsysError while Data: {e}")
+        return False, f"AnalysisnsysError while Data: {str(e)}", float('inf')

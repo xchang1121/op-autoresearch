@@ -1,6 +1,6 @@
 ---
 name: triton-ascend-elementwise-reduce-fused
-description: "适用于同时包含逐元素计算和全局归约两个阶段的复合算子。典型算子包括：损失函数（MSELoss, HuberLoss, HingeLoss, SmoothL1Loss, CrossEntropyLoss, KLDivLoss, CosineSimilarityLoss, TripletMarginLoss 等）、以及自定义的先逐元素变换再全局聚合的算子。这类算子的计算模式是：第一步对张量每个元素独立执行变换（差值、平方、clamp 等），第二步对变换结果做全局或按维度归约（sum/mean）得到标量或低维结果。与纯 elementwise 或纯 reduce 不同，这类算子需要在同一个 kernel 中融合两个阶段以避免中间结果的额外 GM 读写。"
+description: "Applies to the combination of two phases that include both element-by-component calculations and global integrationoperatorIt's typical.operatorIncludes: Loss FunctionsMSELoss, HuberLoss, HingeLoss, SmoothL1Loss, CrossEntropyLoss, KLDivLoss, CosineSimilarityLoss, TripletMarginLossWaiting, and custom-defined pre-element transformations and global aggregationsoperatorThis kind.operatorAnd the mode of calculation is: the first step is right.tensorEach element performs independently the transformation (margin, square,clampetc.), step 2 is to make a global or dimensional return to the transformation result (sum/meanGot it.scalarOr low-dimensional results. And pure.elementwiseOr pure.reduceIt's different. It's kind of...operatorIt needs to be the same.kernel2 stages of integration to avoid additional intermediate resultsGMRead and write."
 category: guide
 version: "1.0.0"
 metadata:
@@ -10,19 +10,19 @@ metadata:
   operator_type: "elementwise_reduce_fused"
 ---
 
-# Elementwise + Reduce 融合算子指南
+# Elementwise + Reduce Integration operator Guide
 
-> 适用于先逐元素计算、再全局归约的复合算子（损失函数等）
+> Composite operator (loss function, etc.) applicable to element-by-fact calculations and global regression
 
-## 计算模式
+## Calculator Mode
 
-这类算子的通用流程：
-1. **Elementwise 阶段**：对输入张量逐元素执行变换（如差值、平方、clamp、log 等）
-2. **Reduce 阶段**：对变换结果做全局归约（sum / mean），得到标量或低维输出
+Common processes for this type of operator:
+1. **Elementwise phase**: execute changes to input tensor elements per element (e. g., margin, square, kamp, log, etc.)
+2. **Reduce phase**: global return of transformation results (sum / mean), with scalar or low-dimensional output
 
-## 融合 Kernel 写法
+## Combining Kernel Writing
 
-将 elementwise 计算和局部归约放在同一个 kernel 中，避免中间结果写回 GM：
+Place the calculation and partial integration in the same Kernel to avoid the intermediate result writing back GM:
 
 ```python
 @triton.jit
@@ -41,21 +41,21 @@ def fused_loss_kernel(
         pred = tl.load(pred_ptr + offsets, mask=mask, other=0.0)
         target = tl.load(target_ptr + offsets, mask=mask, other=0.0)
 
-        # Elementwise 阶段
+        # Elementwise Phase
         diff = pred - target
-        loss_elem = diff * diff  # MSELoss 为例
+        loss_elem = diff * diff  # MSELoss Example:
 
-        # 块内归约
+        # Internal Convention
         local_sum += tl.sum(loss_elem, axis=0)
 
-    # 跨块归约
+    # Cross-Register
     tl.atomic_add(output_ptr, local_sum / n_elements)
 ```
 
-## 关键要点
+## Key points
 
-1. **单 kernel 融合**：elementwise 变换和归约在同一 kernel 完成，中间结果仅存在于寄存器/UB 中
-2. **原子操作汇总**：多个 program 的局部结果通过 `tl.atomic_add` 汇聚到全局输出
-3. **reduction 参数**：注意 PyTorch 损失函数的 `reduction` 参数（`'mean'`/`'sum'`/`'none'`），`'none'` 时退化为纯 elementwise
-4. **使用 VEC_CORE_NUM**：此类算子不涉及 `tl.dot`，使用向量核心
-5. **数值稳定性**：中间计算用 float32，避免半精度溢出
+1. **single kernel integration**: elementwise transforms and returns are done in the same kernel with intermediate results only in the register/ UB
+2. **Atom Operations Summary**: local results of multiple programs are aggregated to global output through `tl.atomic_add`
+3. **reductionParameters**: AttentionPyTorchLoss function`reduction`Parameters (%2)`'mean'`/`'sum'`/`'none'`),`'none'`It's degenerative to purity.elementwise
+4. **Use VEC_CORE_NUM**: such operator does not involve `tl.dot`, use vector core
+5. **Numerical stability**: mid-calculation applied to float32 to avoid a semi-accuracy spill

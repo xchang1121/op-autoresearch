@@ -1,102 +1,102 @@
-# 算术运算 API 优化指南
+# API Optimization Guide for arithmetical operations
 
-> **适用场景**：使用算术运算 API（Add/Sub/Mul/Div）时，选择最优实现方式，避免不必要的广播 buffer 和指令开销。
-
----
-
-## 目录
-
-- [概述](#概述)
-- [场景1：标量操作（单行）](#场景1标量操作单行)
-  - [方案对比](#方案对比)
-  - [API 接口](#api-接口)
-  - [完整示例](#完整示例)
-- [场景2：广播操作（多行）](#场景2广播操作多行)
-  - [方案对比-1](#方案对比-1)
-  - [核心原理](#核心原理)
-  - [分批处理](#分批处理)
-- [场景3：半精度加减法精度优化](#场景3半精度加减法精度优化)
-  - [问题根因](#问题根因)
-  - [默认策略](#默认策略)
-  - [标准范式](#标准范式)
-  - [Kernel 集成要点](#kernel-集成要点)
-- [性能对比](#性能对比)
-- [适用 API](#适用-api)
-- [常见错误](#常见错误)
+> **Applicable scenario**: Optimistic means of achieving the best by using algorithms to calculate API (Add/Sub/Mul/Div), avoiding unnecessary broadcast buffer and command expenses.
 
 ---
 
-## 概述
+## Contents
 
-算术运算 API（Add/Sub/Mul/Div）支持两种使用模式：
+- [Overview](# OVERVIEW)
+- [Scene 1: scalar Operations (single line)](#Scene 1 scalar Operations Line)
+  - [Programme comparison](# programme comparison)
+  - [API interface](#api-interface)
+  - [full example](#full example)
+- [Scene 2: Broadcast operation (multiline)](#Scene 2 broadcast operation multiline)
+  - [Programme comparison-1](#programme comparison--1)
+  - [core principles](# core principles)
+  - [Short processing](# batch processing)
+- [Scene 3: Half accuracy plus minus accuracy Optimum](#accuracy 3: minus accuracy Optimum)
+  - [Question Roots](# Problem Roots)
+  - [default policy](#default policy)
+  - [Standard paradigm](#Standard paradigm)
+  - [Kernel Integration Point](#kernel - Integration Point)
+- [Performance comparison](#Performance comparison)
+- [API applies](#Api applies)
+- [Annual errors](#Annual errors)
 
-| 模式 | API | 适用场景 | Buffer 需求 |
+---
+
+## Overview
+
+API (Add/Sub/Mul/Div) supports two modes of use:
+
+| Mode | API | Apply scene | Buffer Requirements |
 |-----|-----|---------|------------|
-| **标量操作** | `Adds/Muls` | 单行处理（Softmax AR 模板） | 32B |
-| **广播操作** | `Sub/Div + BinaryRepeatParams` | 多行处理（Softmax ARA 模板） | alignedCols×4 |
+| **scalar operation** | `Adds/Muls` | Single-line processing (Softmax AR template) | 32B |
+| **Broadcasting operation** | `Sub/Div + BinaryRepeatParams` | Multiline processing (Softmax ARA template) | alignedCols×4 |
 
-**关键优化**：
-- 单行：使用 `Adds/Muls` 避免 Duplicate
-- 多行：使用 `src1RepStride=0` 避免逐行循环
+**Key optimization**:
+- Single line: Avoid Duplicate with `Adds/Muls`
+- Multiline: Use `src1RepStride=0` to avoid a line-by-line cycle
 
 ---
 
-## 场景1：标量操作（单行）
+## Scenario 1: scalar Operations (one line)
 
-### 方案对比
+### Programme comparison
 
-**问题**：需要对 tensor 每个元素执行 `x - scalar` 或 `x / scalar`
+**Question**: tensor needs to execute `x - scalar` or `x / scalar` for each element
 
-**典型场景**：
-- Softmax AR 模板：`x - max_val`（数值稳定）
-- Softmax AR 模板：`exp(x) / sum`（归一化）
-- LayerNorm：`x - mean`（中心化）
-- BatchNorm：`x * gamma + beta`
+**Typical scene**:
+- Softmax AR template: `x - max_val` (value stable)
+- Softmax AR template: `exp(x) / sum` (consolidation)
+- Layer Norm: `x - mean` (centralized)
+- BatchNorm:`x * gamma + beta`
 
-**方案对比**：
+**Programme comparison**:
 
-| 方案 | 指令数 | Buffer 需求 | 推荐度 |
+| Programme | Commands | Buffer Requirements | Recommended level |
 |-----|--------|------------|--------|
-| Duplicate + Sub | 2 条 | `rLength × sizeof(T)` | ⭐⭐ |
-| Duplicate + Div | 2 条 | `rLength × sizeof(T)` | ⭐⭐ |
-| **Adds(-scalar)** | **1 条** | **32B** | **⭐⭐⭐⭐⭐** |
-| **Muls(1/scalar)** | **1 条** | **32B** | **⭐⭐⭐⭐⭐** |
+| Duplicate + Sub | Article 2 | `rLength × sizeof(T)` | ⭐⭐ |
+| Duplicate + Div | Article 2 | `rLength × sizeof(T)` | ⭐⭐ |
+| **Adds(-scalar)** | **1 Article** | **32B** | **⭐⭐⭐⭐⭐** |
+| **Muls(1/scalar)** | **1 Article** | **32B** | **⭐⭐⭐⭐⭐** |
 
-### API 接口
+### API Interface
 
-**Adds（标量加法）**：
+**Adds (scalar plus)**
 ```cpp
 template <typename T, bool isSetMask = true>
 __aicore__ inline void Adds(
-    const LocalTensor<T>& dst, 
-    const LocalTensor<T>& src, 
-    const T& scalarValue, 
+    const LocalTensor<T>& dst,
+    const LocalTensor<T>& src,
+    const T& scalarValue,
     const int32_t& count);
 
-// 功能: dst[i] = src[i] + scalarValue
-// 示例: Adds(dst, src, -maxVal, count)  // 减法转加法
+// Function: dst[i] = src[i] + scalarValue
+// Example: Adds(dst, src, -maxVal, count)/ / Subtract Add
 ```
 
-**Muls（标量乘法）**：
+**Muls (scalar multiplier)**:
 ```cpp
 template <typename T, bool isSetMask = true>
 __aicore__ inline void Muls(
-    const LocalTensor<T>& dst, 
-    const LocalTensor<T>& src, 
-    const T& scalarValue, 
+    const LocalTensor<T>& dst,
+    const LocalTensor<T>& src,
+    const T& scalarValue,
     const int32_t& count);
 
-// 功能: dst[i] = src[i] * scalarValue
-// 示例: Muls(dst, src, 1.0/sum, count)  // 除法转乘法
+// Function: dst[i] = src[i] * scalarValue
+// Example: Muls(dst, src, 1.0/sum, count) // Division Multiplication
 ```
 
-### 完整示例
+### Full Example
 
-#### 优化前（Sub/Div + Duplicate）
+#### Before Optimizing (Sub/Div + Duplicate)
 
 ```cpp
-// Buffer 初始化
-uint32_t broadcastBufSize = rLengthAlign * sizeof(T);  // 例如：512B (rLength=128, FP32)
+// Buffer Initialization
+uint32_t broadcastBufSize = rLengthAlign * sizeof(T);  // For example:512B (rLength=128, FP32)
 pipe.InitBuffer(broadcastBuf, broadcastBufSize);
 pipe.InitBuffer(reduceBuf, reduceBufSize);
 
@@ -105,35 +105,35 @@ LocalTensor<T> broadcastLocal = broadcastBuf.Get<T>();
 
 for (uint32_t row = 0; row < rowsThisLoop; row++) {
     uint32_t rowOffset = row * rLengthAlign;
-    
+
     // Step 1: ReduceMax
     ReduceMax<T>(broadcastLocal, xLocal[rowOffset], reduceTmpLocal, rLength, false);
-    
-    // Step 2: Duplicate + Sub（需要广播 buffer）
+
+    // Step 2: Duplicate + Sub (buffer required)
     T maxVal = broadcastLocal.GetValue(0);
-    Duplicate<T>(broadcastLocal, maxVal, rLength);  // 指令 1
-    Sub<T>(yLocal[rowOffset], xLocal[rowOffset], broadcastLocal, rLength);  // 指令 2
-    
+    Duplicate<T>(broadcastLocal, maxVal, rLength);  // Command 1
+    Sub<T>(yLocal[rowOffset], xLocal[rowOffset], broadcastLocal, rLength);  // Command 2
+
     // Step 3: Exp
     Exp<T>(yLocal[rowOffset], yLocal[rowOffset], rLength);
-    
+
     // Step 4: ReduceSum
     ReduceSum<T, true>(broadcastLocal, yLocal[rowOffset], reduceTmpLocal, rLength);
-    
-    // Step 5: Duplicate + Div（需要广播 buffer）
+
+    // Step 5: Duplicate + Div (buffer required for broadcast)
     T sumVal = broadcastLocal.GetValue(0);
-    Duplicate<T>(broadcastLocal, sumVal, rLength);  // 指令 3
-    Div<T>(yLocal[rowOffset], yLocal[rowOffset], broadcastLocal, rLength);  // 指令 4
+    Duplicate<T>(broadcastLocal, sumVal, rLength);  // Command 3
+    Div<T>(yLocal[rowOffset], yLocal[rowOffset], broadcastLocal, rLength);  // Command 4
 }
 
-// 总计：6 条指令/行，需要 broadcastBuf (512B for rLength=128)
+// Total: 6 directives/lines required broadcast Buf (512B for rLength = 128)
 ```
 
-#### 优化后（Adds/Muls + 标量）
+#### Optimized (Adds/ Muls + scalar)
 
 ```cpp
-// Buffer 初始化（节省 broadcastBuf）
-uint32_t scalarBufSize = 32;  // 最小对齐要求，仅需存储 1 个标量
+// Buffer Initialization (broadcast Buf)
+uint32_t scalarBufSize = 32;  // Minimum alignment requirements, storage only 1 individualscalar
 pipe.InitBuffer(scalarBuf, scalarBufSize);
 pipe.InitBuffer(reduceBuf, reduceBufSize);
 
@@ -142,96 +142,96 @@ LocalTensor<T> scalarLocal = scalarBuf.Get<T>();
 
 for (uint32_t row = 0; row < rowsThisLoop; row++) {
     uint32_t rowOffset = row * rLengthAlign;
-    
+
     // Step 1: ReduceMax
     ReduceMax<T>(scalarLocal, xLocal[rowOffset], reduceTmpLocal, rLength, false);
-    
-    // Step 2: Adds（直接标量操作，无需广播）
+
+    // Step 2: Adds (direct scalar operation, no broadcast)
     T maxVal = scalarLocal.GetValue(0);
-    Adds<T>(yLocal[rowOffset], xLocal[rowOffset], -maxVal, rLength);  // 指令 1
-    
+    Adds<T>(yLocal[rowOffset], xLocal[rowOffset], -maxVal, rLength);  // Command 1
+
     // Step 3: Exp
     Exp<T>(yLocal[rowOffset], yLocal[rowOffset], rLength);
-    
+
     // Step 4: ReduceSum
     ReduceSum<T, true>(scalarLocal, yLocal[rowOffset], reduceTmpLocal, rLength);
-    
-    // Step 5: Muls（除法转乘法，直接标量操作）
+
+    // Step 5: Muls (separate multiplication, direct scalar operation)
     T sumVal = scalarLocal.GetValue(0);
-    T invSumVal = (T)1.0 / sumVal;  // CPU 端计算 1/sum
-    Muls<T>(yLocal[rowOffset], yLocal[rowOffset], invSumVal, rLength);  // 指令 2
+    T invSumVal = (T)1.0 / sumVal;  // CPU End Calculating 1/sum
+    Muls<T>(yLocal[rowOffset], yLocal[rowOffset], invSumVal, rLength);  // Command 2
 }
 
-// 总计：4 条指令/行，节省 broadcastBuf (480B for rLength=128)
+// Grand total: 4 directives/lines, savings in classcast Buf (480B for rLength = 128)
 ```
 
 ---
 
-## 场景2：广播操作（多行）
+## Scenario 2: Broadcast operations (multi-line)
 
-### 方案对比
+### Programme comparison
 
-**问题**：需要对多行数据执行相同的标量操作（如 `x - max`、`exp / sum`）
+**Question**: The same scalar operation (e.g. `x - max`, `exp / sum`) is required for multiline data
 
-**方案对比**：
+**Programme comparison**:
 
-| 方案 | API 调用 | Buffer 需求 | 推荐度 |
+| Programme | API Call | Buffer Requirements | Recommended level |
 |-----|---------|------------|--------|
-| 逐行循环 | R 次 | alignedCols×4 | ⭐⭐ |
-| 单次广播（R ≤ 64） | 1 次 | alignedCols×4 | ⭐⭐⭐⭐⭐ |
-| 分批广播（R > 64） | ceil(R/64) 次 | alignedCols×4 | ⭐⭐⭐⭐⭐ |
+| Line-by-line cycle | R times | alignedCols×4 | ⭐⭐ |
+| Single broadcasts (R ≤ 64) | 1 time | alignedCols×4 | ⭐⭐⭐⭐⭐ |
+| Batch broadcasts (R > 64) | ceil (R/64) | alignedCols×4 | ⭐⭐⭐⭐⭐ |
 
-### 核心原理
+### Core principles
 
-**BinaryRepeatParams.src1RepStride=0 实现广播**：
+**Binary RepeatParams.src1RepStride=0
 
 ```cpp
 struct BinaryRepeatParams {
-    uint8_t dstBlkStride;    // 单次迭代内，dst 的 block 步长
-    uint8_t src0BlkStride;   // 单次迭代内，src0 的 block 步长
-    uint8_t src1BlkStride;   // 单次迭代内，src1 的 block 步长
-    uint8_t dstRepStride;    // 相邻迭代间，dst 的 block 步长
-    uint8_t src0RepStride;   // 相邻迭代间，src0 的 block 步长
-    uint8_t src1RepStride;   // =0 实现广播
+    uint8_t dstBlkStride;    // I'm not sure what I'm talking about.dst of block Step length
+    uint8_t src0BlkStride;   // I'm not sure what I'm talking about.src0 of block Step length
+    uint8_t src1BlkStride;   // I'm not sure what I'm talking about.src1 of block Step length
+    uint8_t dstRepStride;    // It's not like we're in the middle of nowhere.dst of block Step length
+    uint8_t src0RepStride;   // It's not like we're in the middle of nowhere.src0 of block Step length
+    uint8_t src1RepStride;   // =0 Making it happen.
 };
 ```
 
-**工作原理**：
-- `dstRepStride = alignedCols/8`：每次迭代，dst 前进 `alignedCols` 个元素
-- `src0RepStride = alignedCols/8`：每次迭代，src0 前进 `alignedCols` 个元素
-- `src1RepStride = 0`：每次迭代，src1 **不前进**，重复读取相同位置
+**Working principles**
+- `dstRepStride = alignedCols/8`: each iterative, dst forwards `alignedCols` elements
+- `src0RepStride = alignedCols/8`: Src0 Forwards `alignedCols` Element
+- `src1RepStride = 0`: every iterative, src1**Do not move**, repeat reading the same location
 
-**效果**：
+**Effect**:
 ```
-迭代 0: dst[0:cols]     = src0[0:cols]     - src1[0:cols]
-迭代 1: dst[cols:2cols] = src0[cols:2cols] - src1[0:cols]  ← 重复读取
-迭代 2: dst[2cols:3cols]= src0[2cols:3cols]- src1[0:cols]  ← 重复读取
+Organisation 0: dst[0:cols]     = src0[0:cols]     - src1[0:cols]
+Organisation 1: dst[cols:2cols] = src0[cols:2cols] - src1[0:cols]  ← Repeat Read
+Organisation 2: dst[2cols:3cols]= src0[2cols:3cols]- src1[0:cols]  ← Repeat Read
 ```
 
-### 分批处理
+### Batch processing
 
-#### 方案1：逐行循环（低效）
+#### Option 1: Line-by-line cycle (inefficient)
 
 ```cpp
 for (uint32_t r = 0; r < R; r++) {
     Sub(dstLocal[r * alignedCols], srcLocal[r * alignedCols], scalarLocal, alignedCols);
 }
-// API 调用：R 次
+// API Call: R times
 ```
 
-#### 方案2：单次广播（高效，R ≤ 64）
+#### Option 2: Single broadcasts (efficient, R ≤ 64)
 
 ```cpp
 uint64_t mask = alignedCols;
 uint8_t repeatTime = R;
 
-Sub(dstLocal, srcLocal, scalarLocal, mask, repeatTime, 
+Sub(dstLocal, srcLocal, scalarLocal, mask, repeatTime,
     {1, 1, 1, alignedCols/8, alignedCols/8, 0});
-// API 调用：1 次
-// 性能提升：R 倍
+// API Call: 1 call
+// Performance enhancement: R multiple
 ```
 
-#### 方案3：分批广播（高效，R > 64）
+#### Programme 3: Batch broadcasting (efficiency, R > 64)
 
 ```cpp
 constexpr uint32_t BATCH_SIZE = 64;
@@ -241,158 +241,158 @@ for (uint32_t batch = 0; batch < totalBatches; batch++) {
     uint32_t startRow = batch * BATCH_SIZE;
     uint8_t repeatTime = (startRow + BATCH_SIZE <= R) ? BATCH_SIZE : (R - startRow);
     uint32_t offset = startRow * alignedCols;
-    
-    Sub(dstLocal[offset], srcLocal[offset], scalarLocal, 
+
+    Sub(dstLocal[offset], srcLocal[offset], scalarLocal,
         mask, repeatTime, {1, 1, 1, alignedCols/8, alignedCols/8, 0});
 }
-// API 调用：ceil(R/64) 次
-// 性能提升：约 64 倍
+// API Call: ceil (R/64)
+// Performance enhancement: about 64 times
 ```
 
 ---
 
-## 场景3：半精度加减法精度优化
+## Scenario 3: Half accuracy plus minus accuracy Optimization
 
-### 问题根因
+### The root causes of the problem
 
-半精度（FP16=10 位尾数，BF16=7 位）两数量级差异大时会"**大数吃小数**"，Add 和 Sub 面临相同风险：
+Half-accuracy (FP16 = 10-bit end, BF16 = 7-bit) will be at the same risk for the two orders of magnitude "**big**small**, Add and Sub:
 
 ```
 a = 1024.0, b = 0.0625
-  Add<half>  : 1024.0     ← b 被丢弃     Sub<half>  : 1024.0     ← b 被丢弃
-  Add<float> : 1024.0625  ← 正确         Sub<float> : 1023.9375  ← 正确
+  Add<half>  : 1024.0     ← b Abandoned.     Sub<half>  : 1024.0     ← b Abandoned.
+  Add<float> : 1024.0625  ← Correct.         Sub<float> : 1023.9375  ← Correct.
 ```
 
-临界比值（显著退化阈值）：FP16 ≈ 2¹⁰=1024，BF16 ≈ 2⁷=128；完全丢失阈值约 2×（尾数隐含 1 位）。累加 N 次后阈值除以 √N。
+Critical margin (notable degradation threshold):FP16 ≈ 2¹⁰=1024,BF16 ≈ 2⁷=128;total loss threshold approximately2×(end count implied)1bits). PlusNThreshold threshold divided by√N.
 
-### 默认策略
+### Default Policy
 
-**spec 未明确"输入同量级"时一律升 FP32**。通用算子调用方分布未知，一旦遇到残差/累加/归一化/量化反量化即不可控。Add 和 Sub 适用同一规则，BF16 和 FP16 仅临界比值不同（见下）。
+**spec does not explicitly "input the same level" up to FP32**. The generic operator caller distribution is unknown and is not controlled in the event of a disability/aggregation/consolidation/quantitative inverse. Add and Sub apply the same rule, with only a different threshold value for BF16 and FP16 (see below).
 
-| spec 声明输入同量级？ | 推荐实现 | 理由 |
+| Spec declares input of the same magnitude? | Recommended realization | Rationale |
 |---------------------|---------|------|
-| 否（默认） | `Cast → Add/Sub<float>(in-place) → Cast` | 覆盖所有分布 |
-| 是（mask 叠加、已归一化概率相加等） | 直接 `Add/Sub<half>` | 两输入本身仅 10/7 位精度，单次运算不引入额外损失；无 √N 累加放大 |
+| No (default) | `Cast → Add/Sub<float>(in-place) → Cast` | Overwrite All Distributions |
+| Yes (mask superimpose, standardized probabilities, etc.) | Direct `Add/Sub<half>` | The two inputs themselves are only 10/7 bits accuracy and no additional losses are included in the single operation; no √N amplified |
 
-### 标准范式
+### Standard Model
 
-`Add/Sub<float>(dst, src0, src1)` 支持 dst 与 src 别名，仅需 **K=2 份** FP32 临时空间（dst 复用 src0Fp32）：
+`Add/Sub<float>(dst, src0, src1)` supports dst and src aliases, only**K=2 copies**FP32 temporary space (dst reuse src0Fp32):
 
 ```cpp
-// Get<T>(len) 的 len 是元素数；偏移用 tensor[N]
+// The left of Get<T>(len) is the number of elements; offset by tensor [N]
 auto src0Fp32 = tmpBuf.Get<float>(TILE);
 auto src1Fp32 = src0Fp32[TILE];
 
-// half → float 用 CAST_NONE；float → half 用 CAST_ROUND
+// half → floatUse it.CAST_NONE;float → halfUse it.CAST_ROUND
 AscendC::Cast<float, half>(src0Fp32, src0, AscendC::RoundMode::CAST_NONE, count);
 AscendC::Cast<float, half>(src1Fp32, src1, AscendC::RoundMode::CAST_NONE, count);
-AscendC::Add<float>(src0Fp32, src0Fp32, src1Fp32, count);   // in-place；Sub 同理
+AscendC::Add<float>(src0Fp32, src0Fp32, src1Fp32, count);   // in-place;Sub Same thing.
 AscendC::Cast<half, float>(dst, src0Fp32, AscendC::RoundMode::CAST_ROUND, count);
 ```
 
-代价：+3 条指令（共 4 条：2 Cast↑ + 1 Add/Sub + 1 Cast↓），+K×count×sizeof(float) UB。BF16 路径将 `half` 替换为 `bfloat16_t` 即可。
+Cost:+3Directives (total)4Article:2 Cast↑ + 1 Add/Sub + 1 Cast↓),+K×count×sizeof(float) UB.BF16Path will be`half`Replace with`bfloat16_t`It's okay.
 
-> **API 别名约束决定 K**：`Add/Sub<float>` 在 Vector 上支持 dst 与 src 别名，故 K=2；Reduce 类 API 禁止 dst==tmpBuffer，不可类比。
+> **API aliases binding decision K**: `Add/Sub<float>` supports dst and src aliases on Victor, so K=2; Reduce Class API prohibits dst=tmpBuffer, which is not comparable.
 
-### Kernel 集成要点
+### Kernel Integration Points
 
-> 升精度路径需要 K=2 份 FP32 临时 Buffer，Add/Sub<float> 支持 dst/src 别名故 dst 复用 src0Fp32。精度转换 RoundMode 详见 [api-precision.md](api-precision.md)。
+> The ascending accuracy path requires K=2 copies of provisional FP32 Buffer, Add/Sub<float> supports dst/src alias dst reuse src0Fp32. accuracy converts RoundMode as detailed in [api-precision.md] (api-precision.md).
 
 ---
 
-## 性能对比
+## Performance Comparison
 
-### 标量操作（单行）
+### scalar Operations (one line)
 
-| 项目 | 优化前 | 优化后 | 改善 |
+| Item | Before Optimizing | Optimised | Improvement |
 |-----|--------|--------|------|
-| **指令数/行** | 6 条 | 4 条 | **-33%** |
-| **Buffer 大小** | 512B (rLength=128) | 32B | **-94%** |
-| **UB 节省** | - | ~480B | 可用于更大 rowsPerLoop |
+| **Guidances/lines** | Article 6 | Article 4 | **-33%** |
+| **Buffer Size** | 512B (rLength=128) | 32B | **-94%** |
+| **UB Savings** | - | ~480B | Could be used for larger rowsPerLoop |
 
-### 广播操作（多行）
+### Broadcast operation (multi-line)
 
-| R (行数) | 逐行循环 | 单次广播 | 分批广播 | 性能提升 |
+| R (lines) | Line-by-line cycle | Single broadcasts | Battery broadcasts | Performance enhancement |
 |---------|---------|---------|---------|---------|
-| 32 | 32 次 | 1 次 | - | **32×** |
-| 64 | 64 次 | 1 次 | - | **64×** |
-| 100 | 100 次 | - | 2 次 | **50×** |
-| 128 | 128 次 | - | 2 次 | **64×** |
-| 200 | 200 次 | - | 4 次 | **50×** |
+| 32 | 32 times | 1 time | - | **32×** |
+| 64 | 64 times | 1 time | - | **64×** |
+| 100 | 100 times | - | 2 times | **50×** |
+| 128 | 128 times | - | 2 times | **64×** |
+| 200 | 200 times. | - | 4 times | **50×** |
 
-### 半精度加减法（FP16/BF16 Add/Sub）
+### Half-accuracy plus minus (FP16/BF16 Add/Sub)
 
-升精度路径相对直接 `Add/Sub<half>`：+3 条指令（共 4 条）、+2×count×sizeof(float) UB。适用场景见[场景3 默认策略](#默认策略)。
+The route to accuracy is relatively direct, `Add/Sub<half>`: +3 commands (4 in total), +2× Count ×sizeof (float) UB. Apply the scene [Scene 3 default policy](#default policy).
 
-### 实测示例（Softmax ARA 分支）
+### Example (Softmax ARA branch)
 
-**场景**：R=128, alignedCols=64, FP32
+**Scene**: R=128, signed Cols=64, FP32
 
-| 操作 | 优化前 | 优化后 | 提升 |
+| Operation | Before Optimizing | Optimised | Raise |
 |-----|--------|--------|------|
-| Sub (x-max) | 128 次 | 2 次 | 64× |
-| Div (exp/sum) | 128 次 | 2 次 | 64× |
-| **总计** | **256 次** | **4 次** | **64×** |
+| Sub (x-max) | 128 times | 2 times | 64× |
+| Div (exp/sum) | 128 times | 2 times | 64× |
+| Total** | **256 times** | **4 times** | **64×** |
 
 ---
 
-## 适用 API
+## Application of API
 
-所有支持 `BinaryRepeatParams` 的二元运算 API：
+Binary Operations for all supporting `BinaryRepeatParams` API:
 
-| API | 用途 | 单行优化 | 多行优化 |
+| API | Purpose | Single Line Optimization | Multiline Optimization |
 |-----|------|---------|---------|
-| **Add** | 加法 | Adds | src1RepStride=0 |
-| **Sub** | 减法 | Adds(-val) | src1RepStride=0 |
-| **Mul** | 乘法 | Muls | src1RepStride=0 |
-| **Div** | 除法 | Muls(1/val) | src1RepStride=0 |
-| **Max** | 最大值 | - | src1RepStride=0 |
-| **Min** | 最小值 | - | src1RepStride=0 |
+| **Add** | Add | Adds | src1RepStride=0 |
+| **Sub** | Subtract | Adds(-val) | src1RepStride=0 |
+| **Mul** | Multiplication | Muls | src1RepStride=0 |
+| **Div** | Division | Muls(1/val) | src1RepStride=0 |
+| **Max** | Maximum value | - | src1RepStride=0 |
+| **Min** | Min | - | src1RepStride=0 |
 
 ---
 
-## 常见错误
+## Common Errors
 
-| 错误 | 原因 | 解决方案 |
+| Error | Reason | Solutions |
 |-----|------|---------|
-| 编译错误：mask 超限 | `mask > 64` (FP32) | 分批处理或回退循环 |
-| 数据错误 | `src1RepStride` 未设置为 0 | 确认参数：`{..., 0}` |
-| 部分行正确 | offset 计算错误 | `offset = startRow * alignedCols` |
-| 越界崩溃 | repeatTime 计算错误 | 使用三目运算 |
-| Buffer 不足 | 使用 Duplicate 方案 | 改用 Adds/Muls |
-| dst == tmpBuffer | Reduce API 限制 | 使用不同 buffer |
-| FP16/BF16 加减法精度丢失 | 直接 `Add/Sub<half>` 大数吃小数 | 升精度：`Cast→FP32 Add/Sub(in-place)→Cast` |
-| 半精度加减法 Cast 后越界 | 临时 Buffer 不足 | 预留 `2 × count × sizeof(float)`，Add/Sub 复用 src0Fp32 |
-| `Get<T>(len)` 取出长度异常 | 误把字节数当成元素数 | `len` 是元素数，不是字节数 |
+| Could not close temporary folder: %s | `mask > 64` (FP32) | Batch processing or back looping |
+| Data Error | `src1RepStride` is not set to 0 | Confirm parameters: `{..., 0}` |
+| Partial Line Correct | calculator error | `offset = startRow * alignedCols` |
+| Cross-border collapse | calculation error for repeatTime | Use Triple Operations |
+| Buffer Insufficient | Use Duplicate Schemes | Change to Adds/ Muls |
+| dst == tmpBuffer | Reduce API Limit | Use different buffer |
+| FP16/BF16 plus minus accuracy lost | Directly `Add/Sub<half>` | accuracy: `Cast→FP32 Add/Sub(in-place)→Cast` |
+| Half-accuracy plus minus | Temporary Buffer Insufficient | Save `2 × count × sizeof(float)`, Add/Sub reuse src0Fp32 |
+| `Get<T>(len)` takes out an abnormal length | Wrong number of bytes as elements | `len` is the number of elements, not bytes |
 
 ---
 
-## 检查清单
+## Checklist
 
-使用算术运算 API 时，确保：
+When using algorithms to calculate API, ensure that:
 
-**标量操作（单行）**：
-- [ ] 使用 `Adds(-scalar)` 替代 `Duplicate + Sub`
-- [ ] 使用 `Muls(1/scalar)` 替代 `Duplicate + Div`
-- [ ] 标量除法转换为乘法（CPU 端计算 1/scalar）
+**scalar Operations (one line)**:
+- [ ] Use `Adds(-scalar)` instead of `Duplicate + Sub`
+- [ ] Use `Muls(1/scalar)` instead of `Duplicate + Div`
+- [ ] scalar division converted to multiplication (CPU end calculation 1/scalar)
 
-**广播操作（多行）**：
+**Radio operations (multilines)**:
 - [ ] alignedCols ≤ 64 (FP32) / ≤ 128 (FP16)
-- [ ] 使用 `src1RepStride = 0` 实现广播
-- [ ] R > 64 时使用分批处理
-- [ ] offset 计算正确：`offset = startRow * alignedCols`
+- [ ] Use `src1RepStride = 0` for broadcast
+- [ ] Use batch processing for R > 64
+- [ ] Ofset correct calculation: `offset = startRow * alignedCols`
 
-**半精度加减法（FP16/BF16 Add/Sub）**：
-- [ ] 默认升精度；仅当 spec 明确"输入同量级"时才允许直接 `Add/Sub<half>`
-- [ ] 临时 Buffer 预留 `K × count × sizeof(float)`，`Add/Sub<float>` 支持别名故 K=2，dst 复用 src0Fp32（in-place）
-- [ ] `Get<T>(len)` 的 len 是元素数；偏移用 `tensor[N]`
-- [ ] Cast 方向：`half→float` 用 `CAST_NONE`，`float→half` 用 `CAST_ROUND`
+**Semi-accuracy plus minus (FP16/BF16 Add/Sub)**:
+- [ ] Default to raise accuracy; direct `Add/Sub<half>` is only allowed when spec explicitly "input equals"
+- [ ] Temporary Buffer set aside `K × count × sizeof(float)`, `Add/Sub<float>` for aliases K=2, resc0Fp32 (in-place)
+- [ ] The left of `Get<T>(len)` is the number of elements; offset by `tensor[N]`
+- [ ] Cast direction: `half→float` with `CAST_NONE`, `float→half` with `CAST_ROUND`
 
 ---
 
-## 参考资料
+## References
 
-- [BinaryRepeatParams 结构体](../../../asc-devkit/docs/api/context/BinaryRepeatParams.md)
+- [ Binary Repeat Params Structure] (../../../asc-devkit/docs/api/context/BinaryRepeatParams.md)
 - [Adds API](../../../asc-devkit/docs/api/context/Adds.md)
 - [Muls API](../../../asc-devkit/docs/api/context/Muls.md)
 - [Sub API](../../../asc-devkit/docs/api/context/Sub.md)

@@ -1,74 +1,74 @@
-# Reduce Pattern 接口详解
+# Reduce Patterson Interface Detailed
 
-跨行批量 Reduce 的 Pattern 接口高级用法。
+Advanced use of the Pattern interface for cross-line batch Reduce.
 
 ---
 
-## 两种重载形式
+## Two Reloading Forms
 
-### 形式1：显式传入 sharedTmpBuffer（推荐）
+### Form 1: Visible transfer of shared TmpBuffer (recommended)
 
 ```cpp
 template <class T, class pattern, bool isReuseSource = false>
 __aicore__ inline void ReduceMax(
-    const LocalTensor<T>& dstTensor, 
-    const LocalTensor<T>& srcTensor, 
-    const LocalTensor<uint8_t>& sharedTmpBuffer,  // 显式传入
-    const uint32_t srcShape[], 
+    const LocalTensor<T>& dstTensor,
+    const LocalTensor<T>& srcTensor,
+    const LocalTensor<uint8_t>& sharedTmpBuffer,  // Visible Input
+    const uint32_t srcShape[],
     bool srcInnerPad
 );
 ```
 
-### 形式2：框架自动申请临时空间
+### Form 2: framework automatic application for temporary space
 
 ```cpp
 template <class T, class pattern, bool isReuseSource = false>
 __aicore__ inline void ReduceMax(
-    const LocalTensor<T>& dstTensor, 
-    const LocalTensor<T>& srcTensor, 
-    const uint32_t srcShape[], 
+    const LocalTensor<T>& dstTensor,
+    const LocalTensor<T>& srcTensor,
+    const uint32_t srcShape[],
     bool srcInnerPad
 );
 ```
 
-> **⚠️ 形式2 必须预留临时空间**，否则运行时 UB 越界。详见 [临时空间预留](#临时空间预留)。
+> **⚠ ️ Form 2 must reserve temporary space**or runtime UB crosses the border. For more details, see [Temporary Space Reserve](#Temporary Space Reserve).
 
 ---
 
-## Pattern 类型
+## Pattern type
 
-| Pattern | 方向 | 输入形状 | 输出形状 | 用途 |
+| Pattern | Direction | Enter shape | Output shape | Purpose |
 |---------|-----|---------|---------|------|
-| `Pattern::Reduce::AR` | 沿最后一维（列方向） | (R, C) | (R,) | 每行归约为1个值 |
-| `Pattern::Reduce::RA` | 沿第一维（行方向） | (R, C) | (C,) | 每列归约为1个值 |
+| `Pattern::Reduce::AR` | Follow the last dimension (column direction) | (R, C) | (R,) | Each line is about one value. |
+| `Pattern::Reduce::RA` | Along the first dimension (line direction) | (R, C) | (C,) | Each column is about 1 value |
 
 ---
 
-## 参数说明
+## Description of parameters
 
-| 参数 | 类型 | 说明 |
+| Parameters | Type | Annotations |
 |-----|------|------|
-| `T` | half/float | 数据类型 |
-| `pattern` | Pattern::Reduce::AR/RA | 归约模式 |
-| `isReuseSource` | bool | 是否复用源操作数（默认 false） |
-| `dstTensor` | LocalTensor\<T\> | 输出张量 |
-| `srcTensor` | LocalTensor\<T\> | 输入张量 |
-| `sharedTmpBuffer` | LocalTensor\<uint8_t\> | 临时缓存（形式1） |
-| `srcShape` | uint32_t[] | `{rows, alignedCols}`，**alignedCols 必须 32 字节对齐** |
-| `srcInnerPad` | bool | A2/A3 芯片只支持 `true` |
+| `T` | half/float | data type |
+| `pattern` | Pattern::Reduce::AR/RA | Reunification Mode |
+| `isReuseSource` | bool | Reuse Source Operations (Default false) |
+| `dstTensor` | LocalTensor\<T\> | Output tensor |
+| `srcTensor` | LocalTensor\<T\> | Enter tensor |
+| `sharedTmpBuffer` | LocalTensor\<uint8_t\> | Temporary cache (Form 1) |
+| `srcShape` | uint32_t[] | `{rows, alignedCols}`,**alignedCols must be 32 byte aligned** |
+| `srcInnerPad` | bool | A2/A3 Chip only supports `true` |
 
 ---
 
-## 临时空间预留
+## Temporary space reserved
 
-**两种形式都需要预留临时空间**：
+**Both forms require temporary space**:
 
-| 方式 | 预留方法 | 优点 | 推荐度 |
+| Modalities | Retention Method | Strengths | Recommended level |
 |-----|---------|------|-------|
-| **形式1** | `InitBuffer(tmpBuf, tmpSize)` + 显式传入 | 内存可控、可复用 | ⭐⭐⭐⭐⭐ |
-| **形式2** | `InitBuffer(tmpBuf, tmpSize)`（框架自动使用） | 代码简洁 | ⭐⭐⭐ |
+| **Form 1** | `InitBuffer(tmpBuf, tmpSize)`+ Visible Input | Memory Controllable, Reusable | ⭐⭐⭐⭐⭐ |
+| **Form 2** | `InitBuffer(tmpBuf, tmpSize)` (used automatically by framework) | The code is simple. | ⭐⭐⭐ |
 
-**临时空间大小计算**：
+**Temporary space size calculations**:
 
 ```cpp
 #include "kernel_operator.h"
@@ -76,39 +76,39 @@ __aicore__ inline void ReduceMax(
 uint32_t maxSize, minSize;
 AscendC::GetReduceMaxMaxMinTmpSize(srcShape, sizeof(T), isReuse, maxSize, minSize);
 
-// 使用 maxSize（安全）或 minSize（节省内存）
+// Use maxSize (safe) or minSize (saving memory)
 pipe->InitBuffer(tmpBuf, maxSize);
 ```
 
-参考文档：`asc-devkit/docs/api/context/GetReduceMaxMaxMinTmpSize.md`
+Reference document: `asc-devkit/docs/api/context/GetReduceMaxMaxMinTmpSize.md`
 
 ---
 
-## 完整示例
+## Full Example
 
-### 示例1：ReduceMax（AR/RA Pattern）
+### Example 1: ReduceMax (AR/RA Patterson)
 
 ```cpp
 AscendC::LocalTensor<float> dstLocal = outQueue.AllocTensor<float>();
 AscendC::LocalTensor<float> srcLocal = inQueue.DeQue<float>();
 AscendC::LocalTensor<uint8_t> tmpLocal = tmpBuf.Get<uint8_t>();
 
-uint32_t srcShape[] = {rows, alignedCols};  // alignedCols 必须 32 字节对齐
+uint32_t srcShape[] = {rows, alignedCols};  // alignedCols I have to. 32 Byte Alignment
 constexpr bool isReuse = true;
 
-// AR Pattern：每行归约为1个值 → 输出 rows 个值
+// AR Patterson: About 1 value → outputrows per line
 AscendC::ReduceMax<float, AscendC::Pattern::Reduce::AR, isReuse>(
     dstLocal, srcLocal, tmpLocal, srcShape, true);
 
-// RA Pattern：每列归约为1个值 → 输出 alignedCols 个值
+// RA Pattern: About 1 value per column → output signedcols
 AscendC::ReduceMax<float, AscendC::Pattern::Reduce::RA, isReuse>(
     dstLocal, srcLocal, tmpLocal, srcShape, true);
 ```
 
-### 示例2：ReduceSum（框架自动申请）
+### Example 2: ReduceSum (framework automatic application)
 
 ```cpp
-// ⚠️ 必须提前预留临时空间
+// ⚠ ️ has to set aside temporary space in advance.
 AscendC::LocalTensor<float> dstLocal = outQueue.AllocTensor<float>();
 AscendC::LocalTensor<float> srcLocal = inQueue.DeQue<float>();
 
@@ -120,13 +120,13 @@ AscendC::ReduceSum<float, AscendC::Pattern::Reduce::AR, true>(
 
 ---
 
-## 对比总结
+## Comparative summary
 
-| 对比项 | 形式1（显式传入） | 形式2（框架申请） |
+| Contrast | Form 1 (obvious inflow) | Form 2 (framework application) |
 |-------|-----------------|------------------|
-| tmp 参数 | ✅ 显式传入 | ❌ 框架自动申请 |
-| 预留空间 | ✅ 调用时传入即可 | ⚠️ **必须在 InitBuffer 预留** |
-| 内存管理 | 手动管理，可复用 | 需提前预留，易遗漏 |
-| 推荐度 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ |
+| tmp Arguments | ✅ Visible Inflow | Automatic application for ❌ framework |
+| Preserve Space | ✅ is fine when called. | ⚠ ️**has to stay in InitBuffer** |
+| Memory management | Manually managed, reusable | Pre-encumbered, easily missed. |
+| Recommended level | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ |
 
-**推荐使用形式1**，避免遗漏预留空间导致运行时错误。
+**Recommended use of form 1**to avoid the omission of reserved space leading to runtime errors.

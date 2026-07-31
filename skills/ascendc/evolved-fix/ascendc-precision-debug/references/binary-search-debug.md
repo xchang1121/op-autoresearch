@@ -1,89 +1,89 @@
-# 二分调试法详细指南
+# Detailed guidance on the dichotomy
 
-## 原理
+## Rationale
 
-二分调试法按照算子的数学公式，将计算过程拆分成多个阶段，逐步验证每个阶段的中间结果。
+The dichotomy is based on a mathematical formula of operator, which divides the calculation process into multiple stages, gradually validating the intermediate results of each stage.
 
-**为什么作为保底手段**：
-- 需要修改代码添加 printf 输出，较耗时
-- 应先尝试误差分析、检查常见陷阱等快速方法
-- 但当问题难以定位时，这是最可靠的手段
+**Why as a means of securing:**
+- Need to modify code to add printf output, more time-consuming
+- Let's try a quick-track approach like error analysis, checking common traps.
+- But when the problem is hard to locate, it's the surest way.
 
-## 何时使用
+## When to use
 
-满足以下任一条件时，立即切换到二分调试：
-1. **快速方法尝试超过 7 次**仍未定位问题
-2. **已经尝试过所有前面手段**（误差分析、Printf 特定位置、常见陷阱排查）
+Switch immediately to a half debug if either of the following conditions is met:
+1. **Fast-track approach tried more than 7**still unpositioned
+2. **All previous instruments have been tried**(error analysis, Printf location, common trap mapping)
 
-> **重要原则**：不要盲目试错超过 7 次，二分调试能更快定位问题。
+> **Key principle**: do not blindly fail more than seven times, dichotomy can be faster to locate.
 
-## 实施步骤
+## Implementation steps
 
-### 基本流程
+### Basic processes
 
 ```
-数学公式分解
+Mathematical Formula Decomposition
     │
-    ├─ 第1层：最外层运算
-    │   └─ 添加 printf，验证中间结果
+    ├─ I don't think so.1Layer: Outer Layer Operations
+    │   └─ Add printf, validate intermediate results
     │
-    ├─ 第2层：向内一层
-    │   └─ 添加 printf，验证中间结果
+    ├─ I don't think so.2Layer: Inner layer
+    │   └─ Add printf, validate intermediate results
     │
-    ├─ ...继续分解...
+    ├─ ...Keep breaking up....
     │
-    └─ 发现首个差异步骤 → 问题定位
+    └─ First step in finding a difference → Problem positioning
 ```
 
-### 示例1：sinh(x) 调试
+### Example 1: sinh(x) debug
 
-数学公式：`sinh(x) = (exp(x) - exp(-x)) / 2`
+Mathematical formula: `sinh(x) = (exp(x) - exp(-x)) / 2`
 
 ```cpp
-// 完整二分拆解代码
+// Full split code.
 
-// 第1步：验证 exp(x)
+// Step 1: Verify exp(x)
 half exp_x = Exp(input);
 printf("Step1 - exp(%.6f) = %.6f\n",
        static_cast<float>(input),
        static_cast<float>(exp_x));
 
-// 第2步：验证 exp(-x)
+// Step 2: Verify exp(-x)
 half exp_neg_x = Exp(-input);
 printf("Step2 - exp(%.6f) = %.6f\n",
        static_cast<float>(-input),
        static_cast<float>(exp_neg_x));
 
-// 第3步：验证分子减法
+// Step 3: Validation of molecular abatement
 half numerator = exp_x - exp_neg_x;
 printf("Step3 - numerator = %.6f - %.6f = %.6f\n",
        static_cast<float>(exp_x),
        static_cast<float>(exp_neg_x),
        static_cast<float>(numerator));
 
-// 第4步：验证最终除法
+// Step 4: Final division of certification
 half result = numerator / 2.0h;
 printf("Step4 - result = %.6f / 2 = %.6f\n",
        static_cast<float>(numerator),
        static_cast<float>(result));
 ```
 
-### 示例2：Softmax 调试
+### Example 2: Softmax debug
 
-数学公式：`softmax(x_i) = exp(x_i - max(x)) / sum(exp(x - max(x)))`
+Mathematical formula: `softmax(x_i) = exp(x_i - max(x)) / sum(exp(x - max(x)))`
 
 ```cpp
-// 第0步：打印输入（前3个元素）
+// Step 0: Print input (first three elements)
 printf("Input samples: [%.6f, %.6f, %.6f]\n",
        static_cast<float>(input[0]),
        static_cast<float>(input[1]),
        static_cast<float>(input[2]));
 
-// 第1步：验证 ReduceMax
+// Step 1: Verify ReduceMax
 half max_val = ReduceMax(input);
 printf("Step1 - max_val = %.6f\n", static_cast<float>(max_val));
 
-// 第2步：验证广播后的 Sub（前3个元素）
+// Step 2: Sub(first three elements) after validation of broadcast
 for (int i = 0; i < 3 && i < size; ++i) {
     half shifted = input[i] - max_val;
     printf("Step2 - shifted[%d] = %.6f - %.6f = %.6f\n",
@@ -93,9 +93,9 @@ for (int i = 0; i < 3 && i < size; ++i) {
            static_cast<float>(shifted));
 }
 
-// 第3步：验证 Exp（前3个元素）
+// Step 3: Validate Exp (first three elements)
 LocalTensor<half> exp_vals;
-// ... 分配内存 ...
+// ...allocation of memory...
 for (int i = 0; i < 3 && i < size; ++i) {
     half shifted = input[i] - max_val;
     half exp_val = Exp(shifted);
@@ -105,11 +105,11 @@ for (int i = 0; i < 3 && i < size; ++i) {
            static_cast<float>(exp_val));
 }
 
-// 第4步：验证 ReduceSum
+// Step 4: Validate ReduceSum
 half exp_sum = ReduceSum(exp_vals);
 printf("Step4 - exp_sum = %.6f\n", static_cast<float>(exp_sum));
 
-// 第5步：验证归一化（前3个元素）
+// Step 5: Validation of conversion (first three elements)
 for (int i = 0; i < 3 && i < size; ++i) {
     half output_val = exp_vals[i] / exp_sum;
     output[i] = output_val;
@@ -120,54 +120,54 @@ for (int i = 0; i < 3 && i < size; ++i) {
            static_cast<float>(output_val));
 }
 
-// 验证：输出之和应该接近1
+// Validation: The sum of the output should be close to 1.
 half output_sum = ReduceSum(output);
 printf("Verification - output_sum = %.6f (expected: 1.0)\n",
        static_cast<float>(output_sum));
 ```
 
-### 示例3：ReduceSum 调试
+### Example 3: ReduceSum debugging
 
 ```cpp
-// 第1步：打印输入（前N个元素）
+// Step 1: Print input (front N elements)
 printf("Input samples: ");
 for (int i = 0; i < min(5, size); ++i) {
     printf("%.6f ", static_cast<float>(input[i]));
 }
 printf("...\n");
 
-// 第2步：验证累加过程（分段打印）
+// Step 2: Validate the cumulative process (sub-printing)
 float sum_fp32 = 0.0f;
 for (int i = 0; i < size; ++i) {
     float val = static_cast<float>(input[i]);
     sum_fp32 += val;
 
-    // 每100个元素打印一次
+    // Print every 100 elements
     if ((i + 1) % 100 == 0 || i == size - 1) {
         printf("Step2 - accumulated %d elements: sum = %.6f\n",
                i + 1, sum_fp32);
     }
 }
 
-// 第3步：验证最终输出
+// Step 3: Verify final output
 half output = static_cast<half>(sum_fp32);
 printf("Step3 - final output = %.6f\n", static_cast<float>(output));
 ```
 
-## 调试技巧
+## Debug techniques
 
-### 1. 从外向内验证
+### 1. Validate From Outward Inner
 
-从数学公式最外层开始，逐层向内验证：
-- 最外层通常是最容易验证的
-- 一旦发现某层有问题，聚焦该层内部
+Starting at the outermost level of the mathematical formula, the layer-by-story validation is:
+- The outermost is usually the easiest to verify.
+- If you find out something's wrong, focus on the inside.
 
-### 2. 对比参考值
+### 2. Comparative Reference Values
 
 ```cpp
-// 使用 CPU/Python 计算参考值
+// Calculate reference values using CPU/Python
 // Python: numpy.exp(x)
-half exp_ref = /* 从外部获取的参考值 */;
+half exp_ref = /* Reference values obtained from outside */;
 half exp_npu = Exp(input);
 
 printf("exp comparison: NPU=%.6f, Ref=%.6f, Diff=%.2e\n",
@@ -176,18 +176,18 @@ printf("exp comparison: NPU=%.6f, Ref=%.6f, Diff=%.2e\n",
        static_cast<float>(abs(exp_npu - exp_ref)));
 ```
 
-### 3. 选择性打印
+### 3. Selective Printing
 
-避免输出爆炸，只打印关键信息：
+To avoid an output explosion, only key messages are printed:
 
 ```cpp
-// 只打印前N个元素
+// Print pre-N elements only
 const int PRINT_N = 3;
 for (int i = 0; i < PRINT_N && i < size; ++i) {
     printf("arr[%d] = %.6f\n", i, static_cast<float>(arr[i]));
 }
 
-// 条件打印：只打印大误差位置
+// Conditional printing: only large error locations
 for (int i = 0; i < size; ++i) {
     if (abs(output[i] - expected[i]) > threshold) {
         printf("Mismatch @%d: got %.6f, exp %.6f\n",
@@ -195,35 +195,35 @@ for (int i = 0; i < size; ++i) {
     }
 }
 
-// 采样打印：每隔N个打印一个
+// Sample printing: Print one every N
 for (int i = 0; i < size; i += 100) {
     printf("arr[%d] = %.6f\n", i, static_cast<float>(arr[i]));
 }
 ```
 
-### 4. 数组边界检查
+### 4. Cluster border checks
 
 ```cpp
-// 打印数组边界，检查是否有越界
+// Print the array boundaries and check if they cross the border.
 printf("Array bounds: [0] = %.6f, [size-1] = %.6f\n",
        static_cast<float>(arr[0]),
        static_cast<float>(arr[size - 1]));
 
-// 打印数组长度
+// Length of print arrays
 printf("Array size: %d\n", size);
 ```
 
-### 5. 数学性质验证
+### 5. Mathematical Validation
 
-利用算子的数学性质验证：
+Validate using the mathematical nature of operator:
 
 ```cpp
-// Softmax: 输出之和应该等于1
+// Softmax: The sum of the output should equal 1
 half output_sum = ReduceSum(output);
 printf("Softmax check: sum(output) = %.6f (expected: 1.0)\n",
        static_cast<float>(output_sum));
 
-// ReLU: 输出不应该有负值
+// RELU: Output should not have negative values
 bool has_negative = false;
 for (int i = 0; i < size; ++i) {
     if (output[i] < 0.0h) {
@@ -233,7 +233,7 @@ for (int i = 0; i < size; ++i) {
 }
 printf("ReLU check: has_negative = %s\n", has_negative ? "true" : "false");
 
-// 对称性：sin(-x) = -sin(x)
+// Symmetric: sin(-x) = -sin(x)
 half sin_x = Sin(x);
 half sin_neg_x = Sin(-x);
 half symmetry_sum = sin_x + sin_neg_x;
@@ -243,33 +243,33 @@ printf("Symmetry check: sin(%.2f) + sin(%.2f) = %.6f (expected: 0)\n",
        static_cast<float>(symmetry_sum));
 ```
 
-## 二分调试决策树
+## Debug Decision Tree
 
 ```
-开始二分调试
+Start debugging in half.
     │
-    ├─ 选择数学公式的第一个中间步骤
-    │   └─ 添加 printf，输出中间结果
+    ├─ Select the first intermediate step of the mathematical formula
+    │   └─ Add printf, output middle result
     │
-    ├─ 对比参考值（CPU/Python 计算）
+    ├─ Comparative reference value (%2)CPU/Python (calculated)
     │   │
-    │   ├─ 一致 → 此步骤正确，继续下一步
-    │   └─ 不一致 → 问题在此步骤，深入分析
+    │   ├─ Unanimously → This is the right step. Go on.
+    │   └─ Inconsistencies → The problem is in-depth analysis.
     │       │
-    │       ├─ 检查 API 调用是否正确
-    │       ├─ 检查数据类型是否正确
-    │       ├─ 检查是否溢出/下溢
-    │       └─ 检查是否满足硬件约束
+    │       ├─ Inspection API The call is correct
+    │       ├─ Inspectiondata typeRight or wrong?
+    │       ├─ Check for spills/Spill
+    │       └─ Check if hardware constraints are met
     │
-    └─ 重复直到找到问题根源
+    └─ Repeat until we find the source of the problem.
 ```
 
-## 常见问题定位
+## common issue positioning
 
-| 步骤输出异常 | 可能原因 | 检查方向 |
+| Step output anomaly | Possible causes | Direction of inspection |
 |------------|---------|---------|
-| exp() 结果为 Inf | 输入过大 | 是否先减 max |
-| ReduceMax 结果错误 | 维度/对齐问题 | 检查硬件约束 |
-| 输出之和不为1 | 归一化问题 | 检查 Div 操作 |
-| 减法结果误差大 | 减法抵消 | 重排公式 |
-| 累加结果误差大 | 精度不足 | 用 FP32 累加器 |
+| Exp() result is Inf | Excessive input | Whether to reduce max first |
+| Reduce Max, it's a mistake. | Dimensions/ Alignment Issues | Check hardware constraints |
+| The sum of the output is not 1 | Question of regularization | Check Div Operations |
+| Subtract result error Large | Subtract offset | Reorder Formulae |
+| Cumulative result error Large | accuracy is inadequate | Using FP32 excavator |

@@ -1,17 +1,3 @@
-# Copyright 2025-2026 Huawei Technologies Co., Ltd
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import asyncio
 import math
 import os
@@ -55,7 +41,7 @@ from op_autoresearch.utils.process_utils import (
 logger = logging.getLogger(__name__)
 
 
-# 信号编号到名称的映射
+# Map of signal number to name
 _SIGNAL_NAMES = {
     1: "SIGHUP",   # Hangup
     2: "SIGINT",   # Interrupt
@@ -68,7 +54,7 @@ _SIGNAL_NAMES = {
 }
 
 def _get_signal_name(signum: int) -> str:
-    """将信号编号转换为可读名称"""
+    """Convert signal number to readable name"""
     return _SIGNAL_NAMES.get(signum, f"SIG({signum})")
 
 
@@ -195,16 +181,16 @@ class LocalWorker(WorkerInterface):
                      ) -> Tuple[bool, str, Dict[str, Any]]:
         """
         Execute verification task locally.
-        
-        注意：device 的管理（acquire/release）由调用方负责
-        这个方法只负责执行已经生成好的脚本（脚本中已包含正确的 device_id）
-        
+
+        Note: device management (acquire/release) is the responsibility of the caller
+        This method is only responsible for implementing a script that has already been produced (the script contains the correct data_id)
+
         Args:
-            package_data: 验证包数据（bytes 或目录路径）
-            task_id: 任务ID
-            op_name: 算子名称
-            timeout: 超时时间
-            
+            Package_data: Verify package data (bytes or directory path)
+            task_id: Task ID
+            Op_name: operator name
+            Timeout: Timeout
+
         Returns:
             Tuple[bool, str, Dict[str, Any]]: (success, log, artifacts)
         """
@@ -216,7 +202,7 @@ class LocalWorker(WorkerInterface):
                 if not os.path.exists(script_path):
                     return False, f"Verification script {script_name} not found.", {}
 
-                # 脚本中的 device_id 已在生成时设置正确；worker 只执行脚本。
+                # script is set correctly at the time of generation; worker only executes scripts.
                 logger.info(f"[{task_id}] Running verification for {op_name}")
                 returncode, stdout, stderr, timed_out = await self._run_script(
                     extract_dir, script_name, timeout, task_id, "Verification")
@@ -226,9 +212,9 @@ class LocalWorker(WorkerInterface):
                 output_log = stdout.decode(errors='replace') + "\n" + stderr.decode(errors='replace')
                 success = (returncode == 0)
 
-                # 当 returncode 为负数时，表示进程被信号终止
-                # subprocess pipes 无法捕获 "Segmentation fault" 等 shell 消息
-                # 需要自己生成有意义的错误信息
+                # When returncode is negative, means process is terminated by signal
+                # Subprocess popes cannot capture "Segmentation fault" and wait for shell messages
+                # Need to generate meaningful error message on your own
                 if returncode < 0 and not output_log.strip():
                     signal_name = _get_signal_name(-returncode)
                     output_log = (
@@ -236,16 +222,16 @@ class LocalWorker(WorkerInterface):
                         f"No output captured (process died before writing to stdout/stderr).\n"
                     )
 
-                # 收集执行过程中生成的 JSON 文件
+                # Collect JSON files generated during execution
                 artifacts = collect_json_artifacts(extract_dir)
                 if artifacts:
                     logger.info(f"[{task_id}] Collected {len(artifacts)} artifact files: {list(artifacts.keys())}")
-                
+
                 if success:
                     logger.info(f"[{task_id}] Verification passed.")
                 else:
                     logger.error(f"[{task_id}] Verification failed with log:\n{output_log}")
-                    
+
                 return success, output_log, artifacts
 
         except Exception as e:
@@ -253,7 +239,7 @@ class LocalWorker(WorkerInterface):
             return False, str(e), {}
 
     async def get_doc(self, doc_name: str) -> str:
-        """返回 Worker 本地环境可见的文档。"""
+        """Returns documents that are visible in the Worker local environment."""
         if doc_name == "triton_ascend_api":
             return load_triton_ascend_api_docs()
         raise ValueError(f"Unsupported doc name: {doc_name}")
@@ -261,18 +247,18 @@ class LocalWorker(WorkerInterface):
     async def profile(self, package_data: bytes, task_id: str, op_name: str, profile_settings: Dict[str, Any]) -> Dict[str, Any]:
         """
         Execute profiling task locally.
-        
-        注意：device 的管理（acquire/release）由调用方负责
-        这个方法只负责执行已经生成好的 profile 脚本
-        
+
+        Note: device management (acquire/release) is the responsibility of the caller
+        This method is only responsible for the implementation of the created profile script
+
         Returns:
-            Dict[str, Any]: 包含 gen_time, base_time, speedup, roofline,
-            roofline_time, roofline_speedup, artifacts 等字段
+            Dict [str, Any]: includes gen_time, base_time, tableup, roofline,
+            Parameters of roofline_time, roofline_speedup, expressions
         """
         try:
             with _extract_package(package_data) as extract_dir:
-                # 注意：profile 脚本中的 device_id 应该在生成时就已经设置正确
-                # （与 verify 类似，通过预先获取设备ID）
+                # Note: data_id in the profile script should have been set correctly at the time of generation
+                # (Similar to verifi, by pre-accessing deviceID)
                 # 3. Get settings
                 backend = profile_settings.get('backend', self.backend)
                 dsl = profile_settings.get('dsl', '')
@@ -433,7 +419,7 @@ class LocalWorker(WorkerInterface):
         except Exception as e:
             logger.error(f"[{task_id}] LocalWorker profiling failed: {e}", exc_info=True)
             return _empty_profile_result(error=str(e))
-    
+
     async def _run_profile_script_async(self, verify_dir: str, script_name: str,
                                         timeout: int, task_id: str,
                                         label: str, keep_res: bool = False) -> bool:
@@ -528,15 +514,15 @@ class LocalWorker(WorkerInterface):
                 cancel_event=cancel_event),
             method="nsys")
 
-    async def profile_single_task(self, package_data: bytes, task_id: str, op_name: str, 
+    async def profile_single_task(self, package_data: bytes, task_id: str, op_name: str,
                                    profile_settings: Dict[str, Any]) -> Dict[str, Any]:
         """
         Execute single task profiling locally.
-        
-        单独测量某段代码的执行性能，不进行 base vs generation 对比。
-        
+
+        A separate measure of the performance of a certain section of the code does not allow comparison.
+
         Returns:
-            Dict[str, Any]: 包含 time_us, success, log 等字段
+            Dict[str, Any]: Paragraph containing time_us, access, log
         """
         try:
             with _extract_package(package_data) as extract_dir:
@@ -545,7 +531,7 @@ class LocalWorker(WorkerInterface):
                 script_path = os.path.join(extract_dir, script_name)
                 if not os.path.exists(script_path):
                     return {'time_us': None, 'success': False, 'log': f'Profile script {script_name} not found'}
-                
+
                 # Run profile script
                 logger.info(f"[{task_id}] Running single task profiling for {op_name}")
                 timeout = resolve_eval_timeout(profile_settings.get('timeout'))
@@ -556,11 +542,11 @@ class LocalWorker(WorkerInterface):
 
                 output_log = stdout.decode(errors='replace') + "\n" + stderr.decode(errors='replace')
                 success = (returncode == 0)
-                
+
                 if not success:
                     logger.error(f"[{task_id}] Profile single task failed with log:\n{output_log}")
                     return {'time_us': None, 'success': False, 'log': output_log}
-                
+
                 # Read result from JSON file
                 result_file = os.path.join(extract_dir, "profile_single_result.json")
                 time_us = None
@@ -585,10 +571,10 @@ class LocalWorker(WorkerInterface):
                         time_us = None
                 except (TypeError, ValueError):
                     time_us = None
-                
+
                 logger.info(f"[{task_id}] Profile single task result: {time_us} us")
                 return {'time_us': time_us, 'success': time_us is not None, 'log': output_log}
-        
+
         except Exception as e:
             logger.error(f"[{task_id}] LocalWorker profile_single_task failed: {e}", exc_info=True)
             return {'time_us': None, 'success': False, 'log': str(e)}
@@ -598,15 +584,15 @@ class LocalWorker(WorkerInterface):
                                  ) -> Tuple[bool, str, bytes]:
         """
         Execute task_desc and generate reference data locally.
-        
-        用于 CUDA-to-Ascend 转换场景：执行 Triton-CUDA 代码，保存输出作为参考数据。
-        
+
+        For CUDA-to-Ascend conversion scenario: execute Triton-CUDA code, save output as reference data.
+
         Args:
-            package_data: 验证包数据（bytes）
-            task_id: 任务ID
-            op_name: 算子名称
-            timeout: 超时时间
-            
+            Package_data: Verify package data (bytes)
+            task_id: Task ID
+            Op_name: operator name
+            Timeout: Timeout
+
         Returns:
             Tuple[bool, str, bytes]: (success, log, reference_data_bytes)
         """
@@ -618,7 +604,7 @@ class LocalWorker(WorkerInterface):
                 script_path = os.path.join(extract_dir, script_name)
                 if not os.path.exists(script_path):
                     return False, f"Verification script {script_name} not found.", b''
-                
+
                 logger.info(f"[{task_id}] Running reference generation for {op_name}")
                 returncode, stdout, stderr, timed_out = await self._run_script(
                     extract_dir, script_name, timeout, task_id, "Reference generation")
@@ -627,26 +613,26 @@ class LocalWorker(WorkerInterface):
 
                 output_log = stdout.decode(errors='replace') + "\n" + stderr.decode(errors='replace')
                 success = (returncode == 0)
-                
+
                 if not success:
                     logger.error(f"[{task_id}] Reference generation failed with log:\n{output_log}")
                     return False, output_log, b''
-                
+
                 # Check for success marker
                 if "REFERENCE_GENERATION_SUCCESS" not in output_log:
                     return False, f"Reference generation did not complete successfully:\n{output_log}", b''
-                
+
                 # Read the generated .pt file
                 ref_file = os.path.join(extract_dir, f"{op_name}_reference.pt")
                 if not os.path.exists(ref_file):
                     return False, f"Reference file {ref_file} not found after generation.", b''
-                
+
                 with open(ref_file, 'rb') as f:
                     ref_bytes = f.read()
-                
+
                 logger.info(f"[{task_id}] Reference generation succeeded, .pt file size: {len(ref_bytes)} bytes")
                 return True, output_log, ref_bytes
-        
+
         except Exception as e:
             logger.error(f"[{task_id}] LocalWorker generate_reference failed: {e}", exc_info=True)
             return False, str(e), b''

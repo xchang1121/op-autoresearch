@@ -1,65 +1,65 @@
-# Broadcast & Mask Operations 优化设计
+# Broadcast & Mask Operations Optimizing Design
 
-## 1. 优化目标
+## 1. Optimization of objectives
 
-Broadcast（广播）与 Mask（掩码）是算子实现中高频出现的内存访问模式。Naive 实现通常采用逐元素标量处理或运行时条件判断，导致：
+Broadcast (radio) and Mask (mask) are memory access models for the medium-high frequency (HF) presence of operator. Naive achieves the usual element-by-element scalar processing or runtime conditionality judgement, resulting in:
 
-- **标量-向量混合操作**：标量输入（如学习率 lr）在循环内反复参与标量运算，无法利用 Vector 单元全带宽。
-- **运行时广播模式判断**：BA/AB 广播模式在 Kernel 内通过运行时条件分支处理，引入分支预测失败开销。
-- **低精度/低效的 mask 表示**：若算子原型要求 float mask（0.0/-inf），占用 4B/元素；改为 bool mask（1B/元素）可降低 75% 带宽。若原型已固定为 float，应在 Kernel 侧将 float mask Cast 为 bool 后复用，后续计算仍享内存效率收益。
-- **GM 多核地址冲突**：多核并行访问同一 512B 区域时被串行处理，MTE2/MTE3 时间异常升高。
+- **scalar-vector hybrid operation**: scalar input (e.g., learning rate lr) is repeatedly involved in scalar's calculations in the cycle and cannot be used for the entire bandwidth unit.
+- **runtime broadcast mode judgement**: BA/AB broadcast mode is processed through runtime conditions branch in Kernel to introduce branch predictions of failure costs.
+- **Low accuracy/ Inefficient Mask means**: If operator prototype requires fload mask (0.0/-inf) to occupy 4B/Element; change to bool mask (1B/Element) can reduce by 75% bandwidth. If the prototype is fixed as float, the `faat mask Cast ' should be reused on Kernel side as bool ', the subsequent calculation will still have an RAM efficiency gain.
+- **GM Multi-nuclear Address Conflict**: MTE2/MTE3 time was exceptionally high when multi-nuclear parallel visits were made to the same 512B area.
 
-本优化通过高阶 API（SelectWithBytesMask、SoftMax）、编译期广播模式分发、标量 Duplicate 广播、GM 地址冲突规避等手段，将 broadcast/mask 场景的性能和内存效率最大化。
+This optimization maximizes the performance and memory efficiency of the broadcast/mask scenario by means of high-level API (SelectWith BytesMask, SoftMax), compilation broadcast mode distribution, scalar Duplicate broadcast, GM address circumvention.
 
-| 指标 | naive | optimized | 收益 |
+| Indicators | naive | optimized | Proceeds |
 |------|-------|-----------|------|
-| mask 内存占用 | float (4B/元素) | bool (1B/元素)，原型支持或 Kernel 内 Cast 后复用 | 带宽降低 75% |
-| 标量运算 | 标量-向量混合 (Muls) | 向量-向量统一 (Duplicate+Mul) | Vector 单元全带宽利用 |
-| 广播模式判断 | 运行时 if-else | 编译期 `if constexpr` | 零运行时分支开销 |
-| mask 语义 | 乘法 mask（精度损失） | SelectWithBytesMask（精确替换） | 语义清晰、精度无损 |
-| 多核 GM 访问 | 同 512B 区域冲突串行 | 错位访问/行切分 | MTE2/MTE3 时间显著降低 |
+| Mask Memory Occupancy | Float (4B/Element) | Bool (1B/Element), prototype supported or post-Cast reuse in Kernel | bandwidth down 75% |
+| scalar Operations | scalar-vector Mixing (Muls) | vector-vector Unified (Duplicate+Mul) | Vector Unit Full bandwidth |
+| Radio mode judgement | runtime if-else | Compiled `if constexpr` | Zruntime branch expenses |
+| Mask Semantics | Multiplication Mask (accuracy loss) | SelectWithBytesMask (exact replacement) | Clear semantics, accuracy without damage |
+| Multiple nuclear GM access | Consequence with 512B regional conflicts | Misplaced access/line splits | MTE2/MTE3 significant reduction in time |
 
-> 适用算子族：`broadcast` 族所有含 mask 输入、广播维度、条件选择的变体，如 `scaled_masked_softmax`、`masked_scatter_with_position`、`apply_adagrad_d` 等。
+> operator applies to all variants of the `broadcast` family that include mask input, broadcast dimension, condition selection, e.g. `scaled_masked_softmax`, `masked_scatter_with_position`, `apply_adagrad_d`, etc.
 
-## 2. 架构概览
+## 2. Overview of the structure
 
-### 2.1 存储层级与数据流
+### 2.1 Storage tiers and data flows
 
-Broadcast/Mask 场景的数据流：src 和 mask 经 MTE2 从 GM 搬入 UB，在 UB 内通过高阶 API（SelectWithBytesMask、SoftMax）完成计算，结果经 MTE3 写回 GM。核心优化包括：标量 Duplicate 广播、BA/AB 编译期模式分发、MaskOffset 偏移管理、GM 地址冲突规避。
+The data stream of the Broadcast/Mask scene: src and mask moved from MTE2 to UB in UB through high-grade API (Select WithBytesMask, SoftMax) calculations, which were written back by MTE3. Core optimizations include scalar Duplicate radio, BA/AB compilation mode distribution, Maskofset offset management, and GM address conflict circumvention.
 
-### 2.2 Broadcast 模式分类
+### 2.2 Broadcast Mode Classification
 
-| 模式 | 描述 | 典型场景 | 索引计算 |
+| Mode | Description | Typical scene. | Indexing |
 |------|------|---------|---------|
-| **Scalar Broadcast** | 标量输入广播为向量 | 学习率 lr、scale 等标量 | `Duplicate` 填充后向量运算 |
-| **BA 模式** | mask 在后几维广播 | mask 形状 [1, S] | `maskIdx = i % xInner` |
-| **AB 模式** | mask 在前几维广播 | mask 形状 [B, 1] | `maskIdx = rowIdx` |
-| **Batch Broadcast** | mask 在 batch 维广播 | causal mask [1, 1, S, S] | `maskMode |= BROADCAST_BATCH` |
-| **Channel Broadcast** | mask 在 channel 维广播 | channel-wise mask | `maskMode |= BROADCAST_CHANNEL` |
+| **Scalar Broadcast** | scalar input broadcast as vector | Learning Rate lr, scale et al. scalar | `Duplicate` Filled vector Operations |
+| **BA model** | Mask, we're broadcasting in the last few dimensions. | Mask shape [1, S] | `maskIdx = i % xInner` |
+| **AB model** | Mask, broadcast in the first few dimensions. | Mask shape [B, 1] | `maskIdx = rowIdx` |
+| **Batch Broadcast** | Mask is broadcasting at the bat. | causal mask [1, 1, S, S] | `maskMode |= BROADCAST_BATCH` |
+| **Channel Broadcast** | We've got a radio broadcast in Channel. | channel-wise mask | `maskMode |= BROADCAST_CHANNEL` |
 
-### 2.3 事件同步模型
+### 2.3 Event Synchronization Model
 
-| 事件类型 | 含义 | 用途 |
+| Event type | Meaning | Purpose |
 |---------|------|------|
-| `MTE2_V` | MTE2 搬运完成 → 允许 Vector 读取 | src/mask tile 数据就绪 |
-| `V_V` | Vector 完成 → 允许 Vector 继续 | SelectWithBytesMask 内部依赖 |
-| `V_MTE3` | Vector 完成 → 允许 MTE3 写回 | 计算完成，可写 GM |
+| `MTE2_V` | MTE2 Move complete → allows Victor to read | src/mask file data ready |
+| `V_V` | Victor complete → to allow Victor to continue | SelectWithBytesMask Internal Dependence |
+| `V_MTE3` | Victor complete → to allow MTE3 to write back | Calculate finished, writeable GM |
 
-## 3. 关键参数配置
+## 3. Key Parameter Configuration
 
 ```cpp
-// Host 侧 TilingData
+// Host side TilingData
 struct BroadcastMaskTiling {
     uint32_t patternType;     // PATTERN_AB = 0, PATTERN_BA = 1
     uint64_t maskMode;        // bit0: batch broadcast, bit1: channel broadcast
-    uint32_t padLineNum;      // 对齐后的行宽
-    uint32_t alignedMaskWidth; // 对齐后的 mask 宽度
-    uint32_t xInner;          // BA 模式内维大小
-    uint32_t xOuter;          // BA 模式外维大小
-    SoftMaxTiling softmaxTilingData;  // SoftMax 高阶 API tiling
+    uint32_t padLineNum;      // Line width after alignment
+    uint32_t alignedMaskWidth; // After alignment mask Width
+    uint32_t xInner;          // BA Internal dimensions of the mode
+    uint32_t xOuter;          // BA The outer dimensions of the mode
+    SoftMaxTiling softmaxTilingData;  // SoftMax High API tiling
 };
 
-// Kernel 侧 MaskOffset 结构体
+// Kernel side Maskofset structure
 struct MaskOffset {
     uint64_t batchOffset = 0;
     uint64_t channelOffset = 0;
@@ -75,13 +75,13 @@ struct MaskOffset {
 };
 ```
 
-### 3.1 对齐约束
+### 3.1 Constraint constraints
 
-| 数据类型 | 对齐粒度 | 说明 |
+| data type | Align Particle Degrees | Annotations |
 |---------|---------|------|
-| FP32 | 8 元素 (32B) | width 需为 8 的倍数 |
-| FP16/BF16 | 16 元素 (32B) | width 需为 16 的倍数 |
-| bool (mask) | 32 元素 (32B) | mask 宽度需为 32 的倍数 |
+| FP32 | 8 Element (32B) | Width needs to be multiple of 8 |
+| FP16/BF16 | 16 Element (32B) | Width needs a multiple of 16 |
+| bool (mask) | 32 Element (32B) | Mask needs a multiple of 32 width |
 
 ```cpp
 uint64_t alignedXBlock = AlignedBytes / xDtypeSize;   // 32 / sizeof(T)
@@ -90,25 +90,25 @@ uint64_t alignedMaskBlock = AlignedBytes / BOOL_SIZE; // 32 / 1 = 32
 uint64_t maskPaddingNum = (width % alignedMaskBlock) ? (alignedMaskBlock - width % alignedMaskBlock) : 0;
 ```
 
-## 4. 核心计算循环
+## 4. Core Calculator Cycle
 
-### 4.1 naive 版本（优化前）
+### 4.1 naive version (before optimization)
 
 ```cpp
-// 阶段 1：标量-向量混合运算（标量 lr 直接参与）
+// Phase1:scalar-vectorMixed Operationsscalar lrdirect participation)
 lrScalar = lrGm.GetValue(0);
 AscendC::Muls(lrMulGradLocal, gradLocal, this->lrScalar, this->tileSize);
 
-// 阶段 2：运行时广播模式判断（2D 简单处理）
+// Stage 2: runtime broadcast mode judgement (2D simple processing)
 uint32_t maskRow = (this->maskDim0 == 1) ? 0 : row;
 uint32_t maskCol = (this->maskDim1 == 1) ? 0 : col;
 uint32_t maskIdx = maskRow * this->maskDim1 + maskCol;
 
-// 阶段 3：float mask 乘法（精度损失，语义不清）
+// Phase 3: Float Mask Multiplication (accuracy loss, lack of semantics)
 AscendC::Muls(scaledLocal, xLocal, scale, tileLength);
-AscendC::Add(scaledLocal, scaledLocal, maskLocal, tileLength);  // mask 是 float 类型
+AscendC::Add(scaledLocal, scaledLocal, maskLocal, tileLength);  // mask Yes. float Type
 
-// 阶段 4：手动 softmax（无高阶 API）
+// Stage 4: Manual softmax
 AscendC::ReduceMax(maxLocal, scaledLocal, sharedLocal, tileLength);
 float rowMax = maxLocal.GetValue(0);
 AscendC::Duplicate(maxLocal, rowMax, tileLength);
@@ -119,29 +119,29 @@ float rowSum = sumLocal.GetValue(0);
 float invSum = 1.0f / rowSum;
 AscendC::Muls(outLocal, expLocal, invSum, tileLength);
 
-// 阶段 5：多核同地址访问（冲突串行）
+// Phase 5: MNA access (conflict swathes)
 for (int i = 0; i < loopOneCore; i++) {
-    DataCopy(dst, src[i * blockSize], blockSize);  // 所有核访问相同区域
+    DataCopy(dst, src[i * blockSize], blockSize);  // All nuclear visits to the same region
 }
 ```
 
-### 4.2 optimized 版本（优化后）
+### 4.2 Optimized version (after optimization)
 
 ```cpp
-// === Variant A: 标量 Duplicate 广播 ===
-// 标量 lr 先 Duplicate 为向量，再与 grad 做向量-向量乘法，避免标量-向量混合运算
+// === Variant A: scalar DuplicateRadio===
+// scalar lr first Duplicate for vector, then vector-vector multiplication with grad to avoid the scalar-vector hybrid operation
 float lrScalar = lrGm.GetValue(0);
 AscendC::Duplicate(lrLocal, lrScalar, tileSize);
 AscendC::Mul(dstLocal, gradLocal, lrLocal, tileSize);
 
-// === Variant B: BA/AB 编译期模式分发 ===
+// Synchronization point.
 if constexpr (PATTERN_TYPE == PATTERN_AB) {
-    if (maskGm[rowidx] == true) { /* AB 模式 */ }
+    if (maskGm[rowidx] == true) { /* AB Mode */ }
 } else {
-    if (maskGm[i % xInner] == true) { /* BA 模式 */ }
+    if (maskGm[i % xInner] == true) { /* BA Mode */ }
 }
 
-// === Variant C/D/F: SelectWithBytesMask 精确 mask 应用 ===
+// === Variant C/D/F: SelectWithBytesMaskExactmaskApply===
 LocalTensor<uint8_t> maskTmpBuf = this->sharedBuffer.template Get<uint8_t>();
 SelectWithBytesMaskShapeInfo shapeInfo;
 shapeInfo.firstAxis = this->lineNum;
@@ -149,7 +149,7 @@ shapeInfo.srcLastAxis = this->paddedHeadDim_;
 shapeInfo.maskLastAxis = this->paddedHeadDim_;
 SelectWithBytesMask(tmpOutLocal, tmpOutLocal, MASK_VALUE, maskLocal, maskTmpBuf, shapeInfo);
 
-// === Variant E: SoftMax 高阶 API ===
+// Synchronization point.
 SoftMaxTiling softmaxTilingData = tilingData.softmaxTilingData;
 SoftMaxShapeInfo softmaxShapeInfoData = {
     static_cast<uint32_t>(lines),
@@ -159,7 +159,7 @@ SoftMaxShapeInfo softmaxShapeInfoData = {
 };
 SoftMax<float, false, false>(dstTensor, srcTensor, sharedBuffer, softmaxTilingData, softmaxShapeInfoData);
 
-// === Variant D: MaskOffset 广播偏移管理 ===
+// Synchronization point.
 struct MaskOffset {
     uint64_t batchOffset = 0;
     uint64_t channelOffset = 0;
@@ -174,104 +174,104 @@ struct MaskOffset {
     }
 };
 
-// === GM 地址冲突规避 ===
-// 错位访问
+// Synchronization point.
+// Misappointment Access
 for (int i = 0; i < loopOneCore; i++) {
     int newProgress = (i + GetBlockIdx()) % loopOneCore;
     DataCopy(dst, src[newProgress * blockSize], blockSize);
 }
 ```
 
-## 5. 从 naive 到 broadcast_mask 的关键修改点
+## 5. Key change points from live to Broadcast_mask
 
-| 修改项 | naive（优化前） | broadcast_mask（优化后） |
+| Modify Item | (before optimization) | Broadcast_mask (optimized) |
 |--------|---------------|------------------------|
-| 标量运算 | 标量-向量混合 (Muls) | Duplicate 广播为向量后统一向量运算 |
-| 广播模式判断 | 运行时 if-else | 编译期 `if constexpr` 零开销分支 |
-| mask 数据类型 | float (4B/元素) | bool (1B/元素)，原型支持或 Kernel 内 Cast 后复用 |
-| mask 应用方式 | 乘法 mask（精度损失） | SelectWithBytesMask（精确替换） |
-| softmax 实现 | 手动 ReduceMax+Exp+ReduceSum | SoftMax 高阶 API（性能提升 10-20%） |
-| mask 偏移计算 | 简单 2D 索引 | MaskOffset 结构体支持 batch/channel 广播 |
-| 多核 GM 访问 | 同区域串行 | 错位访问或行切分避免 512B 冲突 |
+| scalar Operations | scalar-vector Mixing (Muls) | Duplicate Broadcast unified vector after vector |
+| Radio mode judgement | runtime if-else | Compiled `if constexpr` zero-cost branch |
+| data type | Float (4B/Element) | Bool (1B/Element), prototype supported or post-Cast reuse in Kernel |
+| Mask application | Multiplication Mask (accuracy loss) | SelectWithBytesMask (exact replacement) |
+| Softmax Achieved | Manual ReduceMax+Exp+ReduceSum | SoftMax High Level API (10-20%) |
+| Mask Offset Calculator | Simple 2D Index | Maskofset Structure Supportbatch/channel broadcast |
+| Multiple nuclear GM access | Serial with Area | Staggered visits or linets to avoid 512B conflicts |
 
-## 6. 注意事项 / 约束
+## 6. note/ Constraint
 
-1. **SelectWithBytesMask 语义**：当 mask 对应位置为 true 时，dst 取 value；否则取 src。mask=true 的位置应被替换为 MASK_VAL（如 -10000.0），在 softmax 中会变成接近 0 的概率。
+1. **SelectWithBytesMask**: when the corresponding position is true, dst takes value; otherwise src. Mask=true should be replaced with MASK_VAL (e. g. -1000.0), which will become near 0 in softmax.
 
-2. **广播模式识别在 Host 端完成**：`CanBroadcastBAOrAB` 函数在 Host 侧识别广播模式，通过 tiling data 的 `PATTERN_TYPE` 传递给 Kernel。Kernel 内使用模板参数实现编译期分支。
+2. **Broadcast mode recognition completed at the Host end**: `CanBroadcastBAOrAB` functions recognize broadcast mode on the Host side and pass it to Kernel by tiling data `PATTERN_TYPE`. Use template parameters in Kernel to complete the translation period branch.
 
-3. **对齐约束**：所有数据搬运和 Vector 计算必须满足 32B 对齐。FP32 需 8 元素对齐，FP16/BF16 需 16 元素对齐，bool mask 需 32 元素对齐。未对齐时使用 DataCopyPad 自动填充。
+3. **Alignment bound**: All data handling and Vector calculations must meet 32B alignment. FP32 requires 8 element alignment, FP16/BF16 requires 16 element alignment, Bool Mask requires 32 element alignment. DataCopyPad is automatically filled when not aligned.
 
-4. **SoftMax API 的临时 buffer**：使用 SoftMax 高阶 API 需要额外 UB 空间存放临时数据。可通过 `GetSoftMaxMaxTmpSize` 查询所需大小，并与 SelectWithBytesMask 的共享 buffer 精细复用。
+4. **Soft Max API Temporary Buffer**: Additional UB space is needed to store temporary data using the Soft Max High Level API. The size required can be checked through `GetSoftMaxMaxTmpSize`, and the shared Buffer is finely used with SelectWith BytesMask.
 
-5. **GM 地址冲突规避**：
-   - 数据行宽 ≤ 512B 时冲突尤其严重
-   - 错位访问需配合 `SyncAll` 全核同步
-   - 行切分替代列切分可天然避免冲突，但可能导致尾行负载不均
+5. **GM address conflict circumvention**:
+   - The conflict was particularly severe when the data was wide ≤ 512B
+   - Error access needs to be aligned with `SyncAll` All-nucleic sync
+   - Line parts instead of column parts can naturally avoid conflict, but may lead to an uneven end-line load
 
-6. **maskMode 字段定义**：bit0 表示 batch 广播，bit1 表示 channel 广播。当 batch != maskBatch 时设置 batch 广播；当 channel != maskChannel 时设置 channel 广播。
+6. **maskMode field definition**: bit0 for catch radio, bit1 for channel radio. Set watch radio when watch!=maskBatch; set channel when channel!=maskchannel.
 
-7. **精度与性能的平衡**：SoftMax 高阶 API 内部使用 FP32 中间计算保证数值稳定性，即使输入/输出是 FP16。
+7. **accuracy balances performance**: FP32 is used internally to calculate numerical stability even if the input/output is FP16.
 
-## 7. 常见问题与解决方案
+## 7. common issue and Solutions
 
-### Q1: SelectWithBytesMask 与 float mask (Add) 有何区别？
+### Q1: What's the difference between SelectWithBytesMask and floatmask (Add)?
 
-naive 实现使用 `Add(scaledLocal, scaledLocal, maskLocal, tileLength)`，要求 mask 是 float 类型且值为 0/-inf。这种方式：
-- 内存占用高（4B/元素）
-- 语义不清晰（通过加法实现条件选择）
-- 精度可能受乘法 mask 影响
+This means that you can use `Add(scaledLocal, scaledLocal, maskLocal, tileLength)`, and you need to ask the mask to be a float type with a value of 0/-inf:
+- Memory occupancy high (4B/Element)
+- Lack of semantic clarity (conditional selection through additions)
+- accuracy may be affected by multiplication mask
 
-SelectWithBytesMask 使用 bool 类型 mask（1B/元素），语义清晰（条件选择），内存占用降低 75%。若算子原型固定为 float mask，应在 Kernel 侧将 float mask Cast 为 bool 后复用，后续计算仍享内存效率收益。
+If the operator prototype is fixed as a float mask, it should be reused on the side of Kernel after using the bool type mask (1B/Element), semantic (conditional selection) and memory occupancy is reduced by 75%.
 
-### Q2: 如何处理跨 batch/channel 的 mask 广播？
+### Q2: How do we handle the Mask broadcast across the bat/channel?
 
-使用 `MaskOffset` 结构体管理复杂的 mask 偏移计算：
+Manage complex mask offsets using `MaskOffset` structures:
 ```cpp
 MaskOffset offset;
-offset.GetOffset(realBatch, realChannel, realLine);  // 计算当前位置的 mask 偏移
-offset.NextChannel(channelNum);  // 切换到下一个 channel
+offset.GetOffset(realBatch, realChannel, realLine);  // Calculating the current position mask Offset
+offset.NextChannel(channelNum);  // Switch to Next channel
 ```
 
-`CopyMaskIn` 函数处理多种边界情况：当当前 batch 和结束 batch 相同时，只需在一个 channel 内处理；不同时需要跨 batch 处理。
+The `CopyMaskIn` function handles multiple boundary situations: when the current and end of the bat is the same, it only needs to be processed within a channel; instead of having to cross the watch at the same time.
 
-### Q3: BA/AB 模式识别失败时如何降级？
+### Q3: How can the BA/AB mode be downgraded when recognition failed?
 
-若 Host 端无法识别为 BA 或 AB 模式（如更复杂的广播模式），应降级为通用逐元素索引计算，或预先在 Host 端展开 mask 为完整形状。
+If the Hostend cannot be recognized as BA or AB mode (e.g., more complex broadcast mode), it should be downgraded to a generic element-by-component index calculation, or the Mask should be extended in advance at the Hostend to complete shape.
 
-### Q4: GM 地址冲突如何诊断？
+### Q4: How does the GM address conflict be diagnosed?
 
-Profiling 显示 `aiv_mte2_time` 或 `aiv_mte3_time` 异常高时，检查：
-- 多核是否访问同一 512B 区域
-- 数据行宽是否 ≤ 512B
-- 是否可通过行切分或错位访问优化
+Profiling, when `aiv_mte2_time` or `aiv_mte3_time` are abnormally high, check:
+- Multiple access to the same 512B area
+- Whether the width of the data line is ≤ 512B
+- Optimization through line split or misplaced access
 
-## 8. 选型决策与自检清单
+## 8. Selective decision-making and self-check list
 
-### 8.1 选型决策
+### 8.1 Selective decision-making
 
 ```
-if (算子包含 mask 输入或广播维度):
-    → 启用 broadcast_mask 优化
-    → mask 使用 bool 类型（1B/元素）；若原型为 float，Kernel 侧 Cast 为 bool 后复用
-    → 标量输入通过 Duplicate 广播为向量
-    → Host 端识别 BA/AB 广播模式，编译期分发
-    → mask 应用使用 SelectWithBytesMask 高阶 API
-    → softmax 计算使用 SoftMax 高阶 API
-    → 多核场景检查 GM 地址冲突，必要时错位访问或行切分
+if (operatorOrganisation mask Enter or broadcast dimensions):
+    → Enable broadcast_mask Optimization
+    → mask Use bool Type (%1)1B/elements; if prototype is float,Kernel Side Cast as bool Reuse Later
+    → scalarInput Passed Duplicate Broadcast asvector
+    → Host End Identification BA/AB Broadcast mode, compilation and distribution
+    → mask Apply Use SelectWithBytesMask High API
+    → softmax Calculate Usage SoftMax High API
+    → Multi-nuclear scene examination. GM Address conflict, staggered access or line split if necessary
 else:
-    → 标准向量运算即可
+    → StandardvectorIt's good to run.
 ```
 
-### 8.2 自检清单
+### 8.2 Self-check List
 
-- [ ] mask 数据类型为 bool（1B/元素）或 Kernel 内已将 float Cast 为 bool 复用
-- [ ] 标量输入通过 `Duplicate` 广播为向量后参与运算
-- [ ] BA/AB 广播模式在 Host 端识别，Kernel 内使用 `if constexpr` 编译期分支
-- [ ] mask 应用使用 `SelectWithBytesMask`，非乘法 mask 或 Add
-- [ ] SoftMax 计算使用高阶 API，非手动 ReduceMax+Exp+ReduceSum
-- [ ] 所有数据搬运满足 32B 对齐，未对齐时使用 DataCopyPad
-- [ ] 多核场景检查 GM 地址冲突，行宽 ≤ 512B 时启用错位访问或行切分
-- [ ] MaskOffset 正确管理 batch/channel 广播偏移
-- [ ] SoftMax 临时 buffer 与 SelectWithBytesMask 共享 buffer 精细复用
-- [ ] 精度校验通过：与 naive 实现对比，误差 < 1e-5（FP32）或 < 1e-3（FP16）
+- [ ] Mask data type is bool (1B/ Element) or Kernel has re-used float Cast as bool
+- [ ] scalar input for vector by `Duplicate` broadcast
+- [ ] BA/AB broadcast mode recognized at the Hostend, `if constexpr` compile branch in Kernel
+- [ ] Mask Apply with `SelectWithBytesMask`, non-multiplier mask or Add
+- [ ] Soft Max calculates high-level API, non-manual ReduceMax+Exp+ReduceSum
+- [ ] All data handlers meet 32B alignment, using DataCopyPad when not aligned
+- [ ] Multi-nuclear scene check for GM address conflicts. Enable error access or line cut while wide ≤ 512B
+- [ ] Maskofset correctly manages the watch/channel broadcast offset
+- [ ] SoftMax temporary Buffer shares detailed Buffer reuse with selectWithBytesMask
+- [ ] accuracy Validation: achieves comparison with naive, error < 1e-5(FP32) or < 1e-3(FP16)

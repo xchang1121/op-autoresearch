@@ -1,81 +1,81 @@
-# 参数空间与算法使能分析
+# Parameter space and algorithm enabling analysis
 
-> 候选枚举的前置步骤。不完成本分析则候选解集无效。
+> Candidates are listed as pre-steps. Failure to complete this analysis is invalid.
 
 ---
 
-## 执行顺序
+## Order of implementation
 
-四个阶段串行执行，不可跳过或合并：
+Four-stage staggering, not skipping or merging:
 
-| 阶段 | 目标 | 门禁 |
+| Phase | Objective | Doors are forbidden. |
 |------|------|------|
-| §1 | 确定 kernel 实际接收的 tiling 参数全集 | 清单非空 |
-| §2 | 参数类型分类，约束来源追溯 | 每参数有分类 |
-| §3 | 判定当前 shape/dtype 下可用的算法 | ≥1 个算法命中 |
-| §4 | 构建各命中算法的候选解空间 | 每算法有生成规则 |
+| §1 | Determines the tiling full set of parameters actually received by kernel | List is not empty |
+| §2 | Categorization of parameters, binding sources retroactively | Classify for each parameter |
+| §3 | Determines the algorithms available under current Shape/dtype | ≥1 algorithm hit |
+| §4 | Build a candidate space for each goal algorithm | Every algorithm has a generation rule. |
 
-产出写入 `{工作目录}/参数空间分析.md`。
-
----
-
-## §1 Kernel 参数全集
-
-1. 通读 demo 代码，找到 host 向 kernel 传递 tiling 参数的数据结构，列出所有字段
-2. 区分：哪些字段传递给了 kernel，哪些只在 host 侧使用。后者不是调优维度，排除
-3. 分析 kernel 内部如何使用这些字段，提取隐含约束（分支条件、范围检查等）
-
-输出：参数清单 + 每参数在 kernel 中的用途和约束。
+Outputs are written in `{working directory}/parameter spatial analysis.md '.
 
 ---
 
-## §2 参数分类与约束追溯
+## §1 Kernel full set of parameters
 
-对 §1 中每个参数做两件事：
+1. Reads the demo code and finds the data structure of the host to transfer tiling parameters to kernel, listing all fields
+2. Distinction: Which fields are transmitted to Kernel and which are used only on the host side. The latter are not modulated and excluded
+3. Analyse how these fields are used internally in Kernel, extracting implied restraints (separation conditions, scope checks, etc.)
 
-### 类型判定
+Output: List of Parameters + The use and binding of each parameter in Kernel.
 
-| 类型 | 判定 | 搜索行为 |
+---
+
+## §2 parameter classification and binding retroactive
+
+Do two things for each parameter in §1:
+
+### Type determination
+
+| Type | Decision | Search Behaviour |
 |------|------|---------|
-| 固定输入 | 直接来自用户指定的问题规模 | 不搜索 |
-| 独立可调 | 存在搜索/选择逻辑，有多合法值 | 搜索维度 |
-| 派生 | 由其他参数公式计算 | 随独立变量自动计算 |
+| Fixed Input | The scale of the problem directly from the user-specified | Do Not Search |
+| It's independent. | There is a search/selection logic, multiple legitimate values | Search dimensions |
+| Absent. | Calculated by formulae for other parameters | Autocalculate with independent variables |
 
-### 约束来源追溯
+### Retroactivity of binding sources
 
-对每个参数的每个取值范围限制，追溯定义来源：
+Limit the range of values to be taken from each parameter and define the source retroactively:
 
-- 来自芯片规格配置（buffer 容量、核数、对齐粒度）→ **硬件约束**，不可放松
-- 来自硬编码字面量 → **软件经验值**，可纳入搜索
+- From chip specification configuration (buffer capacity, number of cores, alignment) →**Hardware constraint**, not relaxed
+- Text size from hard-coding →**Software experience value**, available for search
 
-判定方法：沿赋值链追溯到原始定义——是平台配置字段还是常数。
+Method of determination: The value chain goes back to the original definition — the platform configuration field or constant.
 
-输出：分类表 + 约束来源表 + 被软件截断的参数列表（标注截断值和硬件上限）。
+Output: Catalogue + Compressed Source Table + List of Parameters Interrupted by Software (mark cut-off values and hardware caps).
 
 ---
 
-## §3 算法使能判定
+## §3 algorithms enable determination
 
-加载该算子族的 tiling-flow.md 中的算法决策树，逐算法检查门禁条件。对每个命中的算法，提取其与默认基线的参数差异（额外约束、固定常量、可调参数增减）。
+The algorithm decision tree of tiling-flow.md, which loads the operator family, checks the doorbar. For the algorithm of each fate, extracts the difference between its parameters and the default baseline (additional constraints, fixed constants, adjustable parameters increase or decrease).
 
-输出：`算法 → 命中/未命中（原因） + 可调参数 + 特殊约束`。
+Output: `A algorithm → hit / missed (cause) + adjustable parameters + special constraints '.
 
-### 样本分桶
+### Sample drums
 
-多 shape / 多 dtype 算子不能只构造一个全局搜索空间。先把样本按语义分桶，再为每个桶分析算法使能：
+Multishape / Multiple dtype operator cannot construct only one global search space.
 
-| 分桶维度 | 例子 | 影响的候选 |
+| Half-barrel dimensions | Examples | Candidates for influence |
 |---|---|---|
-| dtype | fp32、fp16、bf16、int8、int64 | tile 字节数、是否需要 Cast scratch、是否能 native 计算 |
-| rank/layout | rank2 contiguous、rank5 contiguous、非 contiguous | 是否可 flatten、是否需要 index mapping |
-| broadcast | same-shape、scalar、last-dim、general | 是否走 broadcast 快路径 |
-| reduction axis | last-dim、小 D、非连续轴、大 D | 标量规约、单 tile 规约、二阶段规约 |
-| index pattern | 连续段、dim0/dim1、随机 index | DataCopy 块化或 scalar fallback |
-| 特殊语义 | all-zero、all-NaN、single segment、identity reduce | fill/copy/sum 快路径 |
+| dtype | fp32,fp16,bf16,int8,int64 | tile bytes, whether Cast scratch is needed, can count native |
+| rank/layout | rank2 contigouous, rank5 contigouous, non-contigouous | Whether to flatten, whether to inexmap |
+| broadcast | same-shape,scalar,last-dim,general | Whether or not to take the route of Broadcast |
+| reduction axis | Last-dim, Little D, Inconsistent Axes, Large D | scalar Statute, Single tile Statute, Phase II Statute |
+| index pattern | Continuous period, dim0/dim1, random index | DataCopy block or scalar fallback |
+| Special semantics | all-zero,all-NaN,single segment,identity reduce | Fill/copy/sum Quick Path |
 
-输出需要包含每个桶的样本数量、总耗时占比和最慢样本。候选空间优先覆盖“总耗时占比高”的桶，而不是只覆盖样本数量最多的桶。
+The output needs to include the number of samples per barrel, the total time-consuming ratio and the slowest sample.
 
-示例：
+Example:
 
 ```text
 bucket large_same_shape_int8:
@@ -101,25 +101,25 @@ bucket last_dim_broadcast_half:
 
 ---
 
-## §4 候选解空间
+## §4 candidate space
 
-对每个命中算法：
+For each hit algorithm:
 
-1. 独立可调参数取其**硬件约束下的完整范围**，步长为硬件对齐粒度，不受软件截断值限制
-2. 派生参数按 §2 公式计算。若存在软件截断，同时保留截断值和硬件上限值作为候选维度
-3. 所有候选用硬件约束做最终校验，不满足则剔除
+1. Independent adjustable parameters to take the full range of their**hardware binding**, with a hardware alignment particle size and not subject to software cut-off values
+2. The derivative parameter is calculated using the §2 formula. If the software is cut, the cut-off value and the hardware ceiling are maintained as a candidate dimension
+3. Final verification of all candidates with hardware constraints, or exclusion if not satisfied
 
-输出：每算法的独立变量范围、硬件约束、派生公式、扩展维度、预计候选数。
+Output: Independent range of variables per algorithm, hardware constraints, derivative formulae, extension dimensions, projected candidates.
 
-候选空间不要只包含数字参数，也应包含结构候选：
+Candidate space should include not only numerical parameters, but also structural candidates:
 
-| 结构候选 | 何时纳入 |
+| Structure Candidates | When is it included? |
 |---|---|
-| queue depth 1/2/3 | MTE 与 VEC 未重叠，且 UB 账本允许 |
-| scalar small-D path | 小规约同步成本明显 |
-| bulk CopyOut | 每行/每元素小写回较多 |
-| native dtype path | Cast 占比高且精度允许 |
-| direct copy/fill path | special value 或 identity 语义明确 |
-| host dispatch bypass | 通用 kernel 重写风险高，某语义桶明显退化 |
+| queue depth 1/2/3 | MTE does not overlap with VEC and UB account book allows |
+| scalar small-D path | The cost of synchronizing the Statute is obvious. |
+| bulk CopyOut | More lowercase per line/element |
+| native dtype path | Cast high ratio and accuracy allowed |
+| direct copy/fill path | Semantic value or clarity |
+| host dispatch bypass | General Kernel rewrite high risk, a semantic drum is clearly degraded |
 
-每个结构候选都应写清楚启用条件和回退路径，不能只给一个开关名。
+Each structural candidate should have clear conditions for commissioning and regression, and not just one switch name.

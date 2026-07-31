@@ -1,56 +1,56 @@
-# Broadcast - 动态 UB Broadcast（DAV_3510）
+# Broadcast - Dynamic UB Broadcast (DAV_3510)
 
-> **适用场景**: 合轴后多维，DAV_3510 芯片。使用动态 Broadcast API（rank 1~9）在 UB 内广播，无 32B 对齐限制。
+> **Applicable scene**: DAV_3510 chip, multidimensional after axle. Use dynamic Broadcast API (rank 1-9) broadcast in UB without 32B alignment limit.
 >
-> **DAV_2201** 请使用静态接口（rank=1/2），详见 [ub-broadcast.md](ub-broadcast.md)。
+> **DAV_2201**Please use the static interface.rank=1/2) for more details[ub-broadcast.md](ub-broadcast.md).
 
 ---
 
-## 一、与静态接口的对比
+## I. Comparison with static interfaces
 
-| 维度 | 静态接口 (DAV_2201/DAV_3510) | 动态接口 (DAV_3510) |
+| Dimensions | Static interface (DAV_2201/DAV_3510) | Dynamic interface (DAV_3510) |
 |------|-------------------------------|---------------|
-| 芯片 | DAV_2201/DAV_3510 通用 | 仅 DAV_3510 |
-| rank | 仅 1D/2D | **1~9** |
-| axis | 仅 0/1（编译期） | **任意轴**（运行时） |
-| 对齐 | dim=2,axis=0 需 srcShape[1] 32B 对齐 | **无对齐限制** |
-| tmpBuffer | 需要手动管理或框架申请 | Tiling 内部管理 |
+| Chip. | DAV_2201/DAV_3510 Common | DAV_3510 only |
+| rank | 1D/2D only | **1~9** |
+| axis | 0/1 (compilation) only | **Any axis**(runtime) |
+| Alignment | dim=2, axis=0 need srcShape [1] 32B alignment | **No Match Limit** |
+| tmpBuffer | Requires manual management or framework applications | Tiling Internal Management |
 | dtype | int8/uint8/half/float | int8/uint8/int16/uint16/half/bfloat16/int32/uint32/float/int64/uint64 |
 
 ---
 
-## 二、API
+## II. API
 
 ```cpp
-// 1. Kernel 侧计算 Tiling
+// 1. Kernel side calculation Tiling
 BroadcastTiling tiling;
 GetBroadcastTilingInfo<T>(rank, dstShape, srcShape, false, tiling);
 
-// 2. 执行广播
+// 2. Implementation of broadcasting
 Broadcast<T>(dstLocal, srcLocal, dstShape, srcShape, &tiling);
 ```
 
-**参数说明**：
+**Parameter description**:
 
-| 参数 | 说明 |
+| Parameters | Annotations |
 |------|------|
-| rank | 维度数，[1, 9] |
-| dstShape | 输出 shape，uint32_t 数组，长度 = rank |
-| srcShape | 输入 shape，uint32_t 数组，长度 = rank。srcShape[i]=1 且 dstShape[i]>1 时该轴广播 |
-| srcInnerPad | 最后一维是否 32B 对齐，当前仅支持 false |
-| tiling | `GetBroadcastTilingInfo` 的输出，传给 `Broadcast` |
+| rank | Dimensions, [1, 9] |
+| dstShape | Output Shape, uint32_t array, length = rank |
+| srcShape | Enter Shape, uint32_t array, length = rank. srcShape[i]=1 and dstShape[i]>1 at this axis broadcast |
+| srcInnerPad | Whether the last dimension is 32B alignment, only false is currently supported |
+| tiling | Output of `GetBroadcastTilingInfo` to `Broadcast` |
 
-**示例**：
+**Example:**
 
 ```cpp
-// [2, 1, 4] → [2, 3, 4]（沿 axis=1 广播，rank=3）
+// [2, 1,4] → [2, 3, 4](broadcast along axis=1, rank=3)
 uint32_t dstShape[] = {2, 3, 4};
 uint32_t srcShape[] = {2, 1, 4};
 BroadcastTiling tiling;
 GetBroadcastTilingInfo<float>(3, dstShape, srcShape, false, tiling);
 Broadcast<float>(dstLocal, srcLocal, dstShape, srcShape, &tiling);
 
-// [1, 8] → [4, 8]（沿 axis=0 广播，rank=2，无 32B 对齐要求）
+// [1] → [4,8](broadcast along axis=0, rank=2, no 32B alignment requirements)
 uint32_t dstShape2[] = {4, 8};
 uint32_t srcShape2[] = {1, 8};
 BroadcastTiling tiling2;
@@ -60,28 +60,28 @@ Broadcast<half>(dstLocal, srcLocal, dstShape2, srcShape2, &tiling2);
 
 ---
 
-## 三、约束
+## III. CONSTRAINTS
 
-| 约束 | 说明 |
+| Constraints | Annotations |
 |------|------|
-| **芯片** | 仅 DAV_3510 |
+| **Chip** | DAV_3510 only |
 | **rank** | [1, 9] |
-| **广播条件** | srcShape[i]=1 且 dstShape[i]>1 |
-| **地址重叠** | src 和 dst 不能重叠 |
-| **srcInnerPad** | 当前仅支持 false |
+| **Broadcasting conditions** | srcShape[i]=1 and dstShape[i]>1 |
+| **Address overlap** | Src and dst cannot overlap |
+| **srcInnerPad** | Current only support |
 
 ---
 
-## 四、数据流
+## IV. Data flows
 
-与静态 UB Broadcast 相同，区别仅在 Broadcast API 调用：
+Same as static UB Broadcast, the difference is only called by Broadcast API:
 
 ```
-GM → DataCopyPad → UB [srcShape, 未广播]
+GM → DataCopyPad → UB [srcShape, Not broadcast]
   ↓
-GetBroadcastTilingInfo + Broadcast → UB [dstShape, 已广播]
+GetBroadcastTilingInfo + Broadcast → UB [dstShape, Broadcasted]
   ↓
 Compute → UB → DataCopyPad → GM
 ```
 
-Tiling 参数计算、多核切分、多维索引管理与 [ub-broadcast.md](ub-broadcast.md) 完全相同。
+Tiling parameter calculation, multi-nuclei, multi-dimensional index management is identical to [ub-broadcast.md] (ub-broadcast.md).

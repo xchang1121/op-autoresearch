@@ -1,200 +1,200 @@
-# Ascend C API 使用限制与替代方案
+# Ascend C API Use Restrictions and Alternatives
 
-> **重要**：使用任何 API 前必读，避免编译错误和运行时问题
+> **Important**: read before using any API to avoid clerical errors and runtime problems
 
 ---
 
-## 1. 编译期限制
+## 1. Compiler period limitation
 
-### 1.1 禁止使用 std:: 计算函数
+### 1.1 Prohibition of use of std:: Calculating function
 
-**原因**：Kernel 侧不支持 C++ 标准库，必须使用 Ascend C 提供的专用 API
+**Reason**: Kernel side does not support the C++ Standard Library and must use the dedicated API provided by Ascend C
 
-**触发场景**：所有数学计算、比较操作
+**Trigger scene**: all mathematical calculations, comparative operations
 
-**禁止列表**：
+**Ban list**:
 
-| std:: 函数 | ❌ 错误用法 | ✅ Ascend C 替代 | 说明 |
+| std:: Function | Misuse ❌ | ✅ AscendC replacement | Annotations |
 |-----------|----------|----------------|------|
-| `std::abs` | `std::abs(x)` | `AscendC::Abs(dst, src, count)` | 绝对值 |
-| `std::min/max` | `std::min(a, b)` | `(a < b) ? a : b` 或 `AscendC::Min/Max` | 最小/最大值 |
-| `std::sqrt` | `std::sqrt(x)` | `AscendC::Sqrt(dst, src, count)` | 平方根 |
-| `std::pow` | `std::pow(x, y)` | `AscendC::Power(dst, src, count)` | 幂运算 |
-| `std::exp` | `std::exp(x)` | `AscendC::Exp(dst, src, count)` | 指数 |
-| `std::log/log2/log10` | `std::log(x)` | `AscendC::Log/Log2/Log10(dst, src, count)` | 对数 |
-| `std::sin/cos/tan` | `std::sin(x)` | `AscendC::Sin/Cos/Tan(dst, src, count)` | 三角函数 |
-| `std::floor/ceil/round` | `std::floor(x)` | `AscendC::Floor/Ceil/Round(dst, src, count)` | 取整 |
-| `std::isnan/isinf` | `std::isnan(x)` | 手动检查 | 特殊值判断 |
+| `std::abs` | `std::abs(x)` | `AscendC::Abs(dst, src, count)` | Absolute value [u] |
+| `std::min/max` | `std::min(a, b)` | `(a < b) ? a : b` or `AscendC::Min/Max` | Min / max |
+| `std::sqrt` | `std::sqrt(x)` | `AscendC::Sqrt(dst, src, count)` | Square root |
+| `std::pow` | `std::pow(x, y)` | `AscendC::Power(dst, src, count)` | Logic Operations |
+| `std::exp` | `std::exp(x)` | `AscendC::Exp(dst, src, count)` | Index |
+| `std::log/log2/log10` | `std::log(x)` | `AscendC::Log/Log2/Log10(dst, src, count)` | logour |
+| `std::sin/cos/tan` | `std::sin(x)` | `AscendC::Sin/Cos/Tan(dst, src, count)` | Triangular Functions |
+| `std::floor/ceil/round` | `std::floor(x)` | `AscendC::Floor/Ceil/Round(dst, src, count)` | Pickup |
+| `std::isnan/isinf` | `std::isnan(x)` | Manual Check | Special value judgement |
 
-**错误示例**：
+**Example of error**:
 ```cpp
 #include <algorithm>
 #include <cmath>
 
-uint32_t result = std::min(a, b);  // ❌ 编译错误
-float val = std::sqrt(x);          // ❌ 编译错误
-float val = std::exp(x);           // ❌ 编译错误
+uint32_t result = std::min(a, b);  // ❌ Compiler error
+float val = std::sqrt(x);          // ❌ Compiler error
+float val = std::exp(x);           // ❌ Compiler error
 ```
 
-**正确替代**：
+**Correct replacement**:
 ```cpp
-// min/max：使用三元操作符
+// Min/max: Use the tri-channel operator
 uint32_t result = (a < b) ? a : b;  // ✅ min
 uint32_t result = (a > b) ? a : b;  // ✅ max
 
-// 或使用 Ascend C API（批量操作）
+// Ascend C API (volume operation)
 AscendC::LocalTensor<T> minLocal = minBuf.Get<T>();
 AscendC::LocalTensor<T> srcLocal = srcBuf.Get<T>();
-AscendC::Min<T>(minLocal, srcLocal, src2Local, count);  // ✅ 批量最小值
+AscendC::Min<T>(minLocal, srcLocal, src2Local, count);  // ✅ Minimum batch value
 
-// sqrt/exp/log 等：使用 Ascend C API
+// sqrt/exp/log etc: use Ascend C API
 AscendC::LocalTensor<T> dstLocal = dstBuf.Get<T>();
 AscendC::LocalTensor<T> srcLocal = srcBuf.Get<T>();
-AscendC::Sqrt<T>(dstLocal, srcLocal, count);  // ✅ 平方根
-AscendC::Exp<T>(dstLocal, srcLocal, count);   // ✅ 指数
-AscendC::Log<T>(dstLocal, srcLocal, count);   // ✅ 对数
+AscendC::Sqrt<T>(dstLocal, srcLocal, count);  // ✅ Square root
+AscendC::Exp<T>(dstLocal, srcLocal, count);   // ✅ Index
+AscendC::Log<T>(dstLocal, srcLocal, count);   // ✅ logour
 ```
 
-**⚠️ 重要**：所有数学计算都必须使用 Ascend C API，不能混用 std:: 函数！
+**⚠ ️ Important**: All mathematical calculations must use Ascend C API, not mix std: function!
 
-### 1.2 禁止动态内存分配
+### 1.2 Prohibition of dynamic memory distribution
 
-**原因**：AI Core 无动态内存管理能力
+**Reason**: AI Core no dynamic memory management capability
 
-**触发场景**：创建数组、缓冲区等
+**Trigger scene**: creation of arrays, buffer zones, etc.
 
-**错误示例**：
+**Example of error**:
 ```cpp
-std::vector<int> vec;       // ❌ 动态分配
-int* ptr = new int[10];     // ❌ 动态分配
-int* arr = malloc(100);     // ❌ 动态分配
+std::vector<int> vec;       // ❌ Dynamical distribution
+int* ptr = new int[10];     // ❌ Dynamical distribution
+int* arr = malloc(100);     // ❌ Dynamical distribution
 ```
 
-**正确替代**：使用静态分配
+**Correct replacement**: use of static distribution
 ```cpp
-int arr[10];                          // ✅ 栈分配（Host 侧）
-constexpr uint32_t SIZE = 1024;       // ✅ 编译期常量
-pipe.InitBuffer(inQueue, 2, SIZE);    // ✅ UB 静态分配（Kernel 侧）
+int arr[10];                          // ✅ Catalyst AllocationHost Side)
+constexpr uint32_t SIZE = 1024;       // ✅ Compiler period constant
+pipe.InitBuffer(inQueue, 2, SIZE);    // ✅ UB Static distribution(s)Kernel Side)
 ```
 
-### 1.3 Host/Kernel 头文件隔离
+### 1.3 Host/Kernel Header file segregation
 
-**规则**：
-- **Host 侧**（`.cpp`）：禁止包含 `kernel_operator.h`
-- **Kernel 侧**（`.asc/.h`）：可包含 `kernel_operator.h`
+**Rule**:
+- **Host side**(`.cpp`): Ban the inclusion of `kernel_operator.h`
+- **Kernel side**(`.asc/.h`): may contain `kernel_operator.h`
 
-**错误示例**：
-```cpp
-// host/tiling.cpp
-#include "kernel_operator.h"  // ❌ Host 侧禁止
-```
-
-**正确用法**：
+**Example of error**:
 ```cpp
 // host/tiling.cpp
-#include "tiling.h"  // ✅ 仅必要头文件
+#Include "kernel_operator.h" // ❌ Host side forbidden
+```
+
+**Correct use**:
+```cpp
+// host/tiling.cpp
+#Include "tiling.h" // ✅ only headers required
 #include <cstring>
 
 // kernel/operator.h
-#include "kernel_operator.h"  // ✅ Kernel 侧允许
+#Include "kernel_operator.h" // ✅ Kernel side allowed
 ```
 
 ---
 
-## 2. API 使用限制索引
+## 2. API use limit index
 
-以下限制在各专题文档中详细说明：
+The following limitations are detailed in each of the thematic documents:
 
-| 限制类型 | 详细文档 | 核心要点 |
+| Limit Type | Detailed documents | Core elements |
 |---------|---------|---------|
-| **GM 数据搬运** | [api-datacopy.md](api-datacopy.md) | 禁用 SetValue/GetValue，强制 DataCopyPad |
-| **Reduce API** | [api-reduce.md](api-reduce.md) | dst ≠ tmpBuffer，禁用低阶 API |
-| **Compare 256字节对齐** | 见下文 2.1 | count 需 256B 对齐，padding 策略 |
-| **repeatTime 限制** | [api-repeat-limits.md](api-repeat-limits.md) | uint8_t 最大 255，需分批处理 |
-| **流水线同步** | [api-pipeline.md](api-pipeline.md) | MTE/Vector 必须用 EnQue/DeQue 同步 |
+| **GM Data Removal** | [api-datacopy.md](api-datacopy.md) | Disable SetValue/GetValue, force DataCopyPad |
+| **Reduce API** | [api-reduce.md](api-reduce.md) | dst ≠ tmpBuffer, Disable low step API |
+| **Compare 256 bytes aligned** | See below 2.1 | Count requires 256B alignment, padding policy |
+| **repeatTime Limit** | [api-repeat-limits.md](api-repeat-limits.md) | uint8_t Maximum 255, batch processing required |
+| **pipeline Synchronization** | [api-pipeline.md](api-pipeline.md) | MTE/Vector must sync with EnQue/ DeQue |
 
-### 2.1 Compare API 256字节对齐约束
+### 2.1 Compare API 256 byte binding
 
-**约束**：`count` 个元素所占空间必须 **256 字节对齐**
+**Constraint**: space occupied by `count` elements must**256 bytes aligned**
 
-**处理方案**：Padding 策略
+**Process**: Padding Policy
 
 ```cpp
-// 1. 计算对齐大小（float 类型：64 的倍数）
+// Calculate alignment size (fload type: multiple of 64)
 constexpr uint32_t A0 = 32;
 constexpr uint32_t A0_ALIGN = (A0 + 63) / 64 * 64;  // = 64
 
-// 2. UB Buffer 使用对齐大小
+// 2. UB Buffer Use alignment sizes
 pipe.InitBuffer(inQueue, 1, R * A0_ALIGN * sizeof(float));
 
-// 3. CopyIn 时填充极值
-Duplicate(xLocal, -FLT_MAX, R * A0_ALIGN);  // ArgMax 用极小值
-// 再拷贝实际数据到前 A0 个位置
+// CopyIn Filling Polars
+Duplicate(xLocal, -FLT_MAX, R * A0_ALIGN);  // ArgMax Use very small
+// Copy actual data to first A0 position
 
-// 4. API 调用使用对齐大小
+// 4. API Call Use Alignment Size
 Compare(cmpLocal, srcLocal, maxLocal, CMPMODE::GT, A0_ALIGN);
 
-// 5. CopyOut 只输出有效数据
-DataCopy(dstGm, yLocal, A0);  // 只输出 A0 个
+// Copyout Only Output Valid Data
+DataCopy(dstGm, yLocal, A0);  // Output only A0 individual
 ```
 
-**极值选择**：
-- ArgMax / 找最大值：`-FLT_MAX` 或 `-INFINITY`
-- ArgMin / 找最小值：`FLT_MAX` 或 `INFINITY`
+**Polar selection**:
+- Arg Max/ find maximum value: `-FLT_MAX` or `-INFINITY`
+- ArgMin / Find Minimum: `FLT_MAX` or `INFINITY`
 
 ---
 
-## 3. 类型与常量规范
+## 3. Type & Constant Regulation
 
-### 3.1 编译期常量
+### 3.1 Constants for compilation periods
 
-**规则**：Buffer 大小、循环次数等使用 `constexpr`
+**Rule**: Buffer size, number of cycles, etc. using `constexpr`
 
 ```cpp
-// ✅ 正确：编译期常量
+// ✅ Correct: Compiler-period constant
 constexpr uint32_t BUFFER_NUM = 2;
 constexpr uint32_t UB_SIZE = 192 * 1024;
 constexpr uint32_t BLOCK_SIZE = 32;
 
-// ❌ 不推荐：运行期常量
-const uint32_t buffer_num = 2;  // 可能影响性能
+// ❌ Not recommended: run-life constant
+const uint32_t buffer_num = 2;  // Could affect performance.
 ```
 
-### 3.2 类型转换
+### 3.2 Type conversion
 
-**规则**：显式类型转换，避免隐式精度损失
+**Rule**: Visible type conversion to avoid hidden accuracy losses
 
 ```cpp
-// ✅ 正确：显式转换
+// ✅ Correct: Visible conversion
 T sumVal = scalarLocal.GetValue(0);
-T invSumVal = (T)1.0 / sumVal;  // 显式转换为 T
+T invSumVal = (T)1.0 / sumVal;  // Visible conversion to T
 Muls<T>(dst, src, invSumVal, count);
 
-// ❌ 错误：隐式转换
-float val = 1.0 / sumVal;  // 若 T 是 half，精度损失
+// ❌ error: hidden conversion
+float val = 1.0 / sumVal;  // if T Yes. half,accuracyLosses
 ```
 
 ---
 
-## 4. 快速诊断清单
+## 4. Quick diagnostic checklist
 
-遇到编译错误时，检查：
+Check that, in case of a compilation error:
 
-- [ ] 是否使用了 **任何 std:: 计算函数**（min/max/abs/sqrt/exp/log等）→ 改用 Ascend C API 或基础操作
-- [ ] 是否使用了动态内存（`std::vector`, `new`）→ 改用静态分配
-- [ ] Host 侧是否包含了 `kernel_operator.h` → 移除该包含
-- [ ] Reduce API 的 dst 和 tmp 是否是同一 buffer → 使用不同 buffer
-- [ ] 是否使用了 WholeReduce 等低阶 API → 改用高阶 Reduce API
-- [ ] 是否使用了 `const` 而非 `constexpr` → 改用 `constexpr`
-- [ ] 是否使用了不存在的类型（如 `TensorShape`）→ 查阅正确 API
-- [ ] Compare API 的 count 是否满足 256 字节对齐 → 使用 padding 策略
+- [ ] Whether to use**any std:: Calculate function**(min/max/abs/sqrt/exp/log, etc.) → instead of Ascend CAPI or Foundation
+- [ ] Whether dynamic memory (`std::vector`, `new`) → is used instead of static distribution
+- [ ] Does the host side contain `kernel_operator.h` → to remove this inclusion
+- [ ] Whether the dst and tmp of Reduce API are the same buffer → uses different buffer
+- [ ] Whether or not to replace the lower API → with the upper Reduce API
+- [ ] Whether to use `const` instead of `constexpr` → instead of `constexpr`
+- [ ] Whether to use non-existent types (e. g. `TensorShape`) → for correct API access
+- [ ] Compare API count satisfies 256 byte alignment → with pedding policy
 
 ---
 
-## 5. 相关文档
+## 5. Relevant documents
 
-- [api-datacopy.md](api-datacopy.md)：DataCopyPad 使用规范
-- [api-reduce.md](api-reduce.md)：Reduce API 详细用法
-- [api-repeat-limits.md](api-repeat-limits.md)：repeatTime 限制与处理
-- [api-buffer.md](api-buffer.md)：Buffer 管理最佳实践
-- [api-precision.md](api-precision.md)：精度转换规范
+- [api-datacopy.md] (api-datacopy.md): DataCopyPad Usage Standard
+- [api-reduce.md] (api-reduce.md):Reduce API detailed usage
+- [api-repeat-limits.md] (api-repeat-limits.md):repeatTime Limiting and Processing
+- [api-buffer.md] (api-buffer.md):Buffer Management best practice
+- [api-precision.md] (api-precision.md): accuracy Conversion Standard

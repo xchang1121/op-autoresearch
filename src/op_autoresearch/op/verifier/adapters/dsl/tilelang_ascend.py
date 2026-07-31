@@ -1,18 +1,4 @@
-# Copyright 2025 Huawei Technologies Co., Ltd
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-"""TileLang-Ascend DSL adapter - ModelNew (KernelBench) 格式."""
+"""TileLang-Ascend DSL adapter - ModelNew (KernelBench)."""
 
 from typing import Any, Optional
 
@@ -65,10 +51,10 @@ except ImportError:
                       framework: str = "torch") -> str:
         """Return code string to benchmark TileLang Ascend implementation.
 
-        对齐 tilelang.profiler.do_bench 的实现：
-        - 使用 torch.npu.Event 高精度计时
-        - 支持 L2 cache 清除（256MB buffer + zero_）
-        - 自动 warmup 和多次测量取最小值
+        Alignment of Tillang.profiller.do_bench:
+        - Time with torch.npu. Event high accuracy
+        - Support L2 Cache Clear (256MB Buffer + Zero_)
+        - Autowarmup and multiple measurements to take the minimum
         """
         if framework == "torch":
             code = f"""
@@ -77,16 +63,16 @@ except ImportError:
         def tilelang_benchmark_fn():
             return impl_model(*{inputs})
 
-        # 先执行一次确保编译完成
+        # Let's do it once and make sure it's done.
         tilelang_benchmark_fn()
         torch.npu.synchronize()
 
-        # L2 cache 清除 buffer（对齐 tilelang.profiler.do_bench）
+        # L2 cache Clear buffer( Alignment) tilelang.profiler.do_bench)
         cache = None
         if {clear_l2_cache}:
             cache = torch.empty(int(256e6 // 4), dtype=torch.int, device="npu")
 
-        # 使用 torch.npu.Event 高精度计时
+        # Use torch.npu.Event HighaccuracyTime
         start_event = [torch.npu.Event(enable_timing=True) for _ in range({runs})]
         end_event = [torch.npu.Event(enable_timing=True) for _ in range({runs})]
 

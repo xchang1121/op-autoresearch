@@ -1,13 +1,13 @@
 import torch
 from torch.utils.cpp_extension import load_inline
 
-# 内联C++扩展代码
+# Inline C++ Extension Code
 cpp_source = """
 #include <torch/extension.h>
 
 torch::Tensor op_name_kernel(torch::Tensor x) {
     if (!x.is_contiguous()) x = x.contiguous();
-    //具体的代码实现！
+    //Specific code is achieved!
     return output;
 }
 
@@ -16,7 +16,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 }
 """
 
-# 动态加载C++扩展
+# Dynamically load C++ extensions
 op_name_module = load_inline(
     name="custom_op_name",
     cpp_sources=cpp_source,
@@ -24,7 +24,7 @@ op_name_module = load_inline(
     verbose=True
 )
 
-# Python接口函数
+# Python Interface Functions
 
 
 def op_name(x: torch.Tensor) -> torch.Tensor:

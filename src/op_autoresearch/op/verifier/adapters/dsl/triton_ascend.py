@@ -1,18 +1,4 @@
-# Copyright 2025 Huawei Technologies Co., Ltd
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-"""Triton Ascend DSL adapter - 支持 ModelNew (KernelBench) 格式."""
+"""Triton Ascend DSL adapter - Supports ModelNew (KernelBench) format."""
 
 from typing import Any, Optional
 
@@ -50,45 +36,45 @@ except ImportError:
             code += "import numpy as np\n"
         code += "import triton\nimport triton.language as tl\n"
         return code
-    
+
     def get_impl_import(self, op_name: str, impl_func_name: str) -> str:
         """Return implementation function import.
-        
-        统一使用 ModelNew 类格式（KernelBench 风格）。
+
+        Use the ModelNew class format (KernelBench style) in a uniform way.
         """
         return f"from {op_name}_triton_ascend_impl import ModelNew\n"
-    
+
     def create_impl_module(self, framework: str,
-                          framework_adapter: Any, 
+                          framework_adapter: Any,
                           init_params_var: str = "init_params",
                           device_var: str = "device") -> str:
-        """生成创建 impl_model 的代码（只实例化一次）。
-        
+        """Generates the code that creates impl_model (examples only once).
+
         Args:
             framework: Framework name (torch, mindspore, numpy)
             framework_adapter: Framework adapter instance
             init_params_var: Variable name for init_params (default: "init_params")
             device_var: Variable name for device (default: "device")
-            
+
         Returns:
             str: Code string to create impl_model
         """
         code = f"impl_model = ModelNew(*{init_params_var})\n"
         if framework == "torch":
             code += f"impl_model = impl_model.to({device_var})\n"
-        
+
         return code
-    
+
     def call_impl(self, impl_func_name: str, inputs: str, device_id: int,
-                  framework_adapter: Any, op_name: str, 
-                  data_dir: Optional[str] = None, 
+                  framework_adapter: Any, op_name: str,
+                  data_dir: Optional[str] = None,
                   framework_output: Optional[str] = None) -> str:
         """Return code string to call Triton Ascend implementation function.
-        
-        调用已经实例化好的 impl_model（可以多次调用）。
+
+        Call an impl_model (can be called several times).
         """
         return f"impl_output = impl_model(*{inputs})\n"
-    
+
     def benchmark_impl(self, impl_func_name: str, inputs: str,
                       warmup: int, runs: int, backend: str, op_name: str,
                       case_idx: int = 0, framework_model: Optional[str] = None,
@@ -97,22 +83,22 @@ except ImportError:
                       clear_l2_cache: bool = True,
                       framework: str = "torch") -> str:
         """Return code string to benchmark Triton Ascend implementation.
-        
-        使用已经实例化好的 impl_model 进行性能测试。
-        
+
+        Performance tests are performed using impl_model, which has already been sampled.
+
         Args:
-            impl_func_name: 实现函数名
-            inputs: 输入变量名
-            warmup: warmup 次数
-            runs: 有效运行次数
-            backend: 后端类型
-            op_name: 算子名称
-            case_idx: case 索引
-            framework_model: 框架模型变量名（可选）
-            framework_adapter: 框架适配器（可选）
-            device_id: 设备ID（可选）
-            clear_l2_cache: 是否在每次迭代前清除 L2 cache（默认 True）
-            framework: 框架类型 ("torch" 或 "mindspore")
+            impl_func_name: achieve function name
+            inputs: Enter variable name
+            Warmup: warmup times
+            Runs: Effective run times
+            Back: backend type
+            Op_name: operator name
+            Case_idx: case index
+            ramework_model: framework Model Variable Name (optional)
+            framework_adapter: framework adapter (optional)
+            Data_id: deviceID (optional)
+            clear_l2_cache: Whether to clear L2 Cache (default True) before each iterative
+            ramework: framework type (\"toch\" or \"mindspore\")
         """
         framework_arg = f', framework="{framework}"' if framework == "mindspore" else ""
         set_framework_code = ""
@@ -128,25 +114,25 @@ except ImportError:
         code = f"""{set_framework_code}        try:
             from op_autoresearch.op.verifier.profiler import profiler_npu
             from op_autoresearch.op.utils.triton_autotune_patch import get_collected_config_timings, clear_collected_config_timings
-            # 清除之前的配置信息
+            # Clear pre-configuration information
             clear_collected_config_timings()
             patch_imported = True
         except ImportError:
             get_collected_config_timings = lambda: {{}}
             clear_collected_config_timings = lambda: None
             patch_imported = False
-        
-        # 清除缓存确保重新autotune
+
+        # Clear Cache to Ensure Re-entryautotune
         if hasattr(impl_model, 'cache'):
             impl_model.cache.clear()
-        
-        # 触发autotune
+
+        # Triggerautotune
         impl_model(*{inputs})
-        
-        # 获取收集的配置信息
+
+        # Get collected configuration information
         config_timings = get_collected_config_timings()
-        
-        # 保存autotune信息到当前文件夹
+
+        # SaveautotuneCan not open message
         if config_timings:
             autotune_filename = f"autotune_info_case_{case_idx}.json"
             try:
@@ -155,15 +141,15 @@ except ImportError:
                 print(f"[{op_name}] Autotune info saved to {{autotune_filename}}")
             except Exception as e:
                 print(f"[{op_name}] Warning: Failed to save autotune info: {{e}}")
-        
-        # 进行最终的性能测试
+
+        # Final performance test.
         def triton_benchmark_fn():
             result = impl_model(*{inputs})
             return result
-        
+
         if backend == "ascend" and patch_imported:
-            # 使用 triton_ascend 专用的 L2 cache 清除方式
-            # 通过 OP_AUTORESEARCH_l2cache_clear kernel 清除，可在 profiler 中精确过滤
+            # Use triton_ascend It's for personal use. L2 cache Clear Method
+            # Pass. OP_AUTORESEARCH_l2cache_clear kernel Cleared, available profiler Medium Precision Filter
             execution_time_us = profiler_npu(
                 triton_benchmark_fn,
                 warmup={warmup},
@@ -177,7 +163,7 @@ except ImportError:
             execution_time_ms = execution_time_us / 1000
             method = "profiler_npu"
         else:
-            # GPU环境或补丁导入失败：使用标准do_bench
+            # GPUEnvironment or patch import failed: use standarddo_bench
             import triton.testing
             execution_time_ms = triton.testing.do_bench(
                 triton_benchmark_fn,
@@ -188,7 +174,7 @@ except ImportError:
             method = "triton_do_bench"
 """
         return code
-    
+
     def get_special_setup_code(self, framework: str = "torch") -> str:
         """Return special setup code for triton_ascend."""
         code = ""

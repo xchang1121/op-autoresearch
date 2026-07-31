@@ -1,6 +1,6 @@
 ---
 name: triton-ascend-case-reduction-amax-small
-description: "极小规模归约（amax）优化：单核处理（grid=1）优于多核并行（2.16us vs 3.51us），避免并行化带来的调度开销，适用于数据规模很小（<1000元素）的归约场景"
+description: "Mini-small-scale contract conversion (max) optimization: single-nuclear processing (grid = 1) is better than multi-nuclear parallel (2.16us vs. 3.51us), avoids the movement costs associated with parallelization and applies to the return scene of very small data size (<1,000 elements)"
 category: case
 version: "1.0.0"
 metadata:
@@ -9,21 +9,21 @@ metadata:
   hardware: "Atlas A2, Atlas A3"
 ---
 
-# 极小规模 Amax 归约优化
+# Mini Small Amax Recession Optimization
 
-## 任务特征
-- **数据尺寸**：(16, 16)，非常小
-- **策略**：单核处理优于多核并行
+## Task characteristics
+- **Data size**(16, 16), very small
+- **Strategy**: single-nucleus treatment is better than multi-nucleus
 
-## 优化：单核/少核处理
+## Optimization: single/small nuclear processing
 
 ```python
-# 1. 单核处理 -> 性能：2.16 us 最优
+# Single nuclear processing - > Performance: 2.16 us best
 triton.Config({'BLOCK_SIZE_M': 16, 'BLOCK_SIZE_N': 16})
 
-# 2. 多核并行 -> 性能：3.51 us
+# Multi-nuclear parallel - > Performance: 3.51 us
 triton.Config({'BLOCK_SIZE_M': 1, 'BLOCK_SIZE_N': 16})
 ```
 
-### 总结
-对于小规模计算任务，单核（少核）处理性能更优，并行化带来的开销超过了收益。
+### Summary
+For small-scale computing missions, mononucleus (nucleus) processing is more efficient and the cost of parallelization outweighs the benefits.

@@ -1,17 +1,3 @@
-# Copyright 2025-2026 Huawei Technologies Co., Ltd
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """Facts → ``list[Finding]`` classifier + rich.Table renderer.
 
 Pure mapping. Takes raw facts produced by ``remote_probe.probe_remote``
@@ -35,22 +21,21 @@ class Finding:
 
 
 def _ssh_suggest(err: str) -> str:
-    """根据 ssh stderr 关键字猜常见故障类型，给针对性建议。落空时给
-    一条通用的检查清单。"""
+    """Classify common SSH errors and return a focused remediation hint."""
     low = err.lower()
     if "could not resolve hostname" in low or "name or service not known" in low:
-        return "~/.ssh/config 里 alias 没定义；检查别名拼写或 Host 段"
+        return "The alias is missing from ~/.ssh/config; check the alias and Host entry."
     if "timed out" in low or "no route to host" in low or "network is unreachable" in low:
-        return "网络不通；查 VPN / 路由 / 远端机是否在线"
+        return "Check the VPN, network route, and whether the remote host is online."
     if "connection refused" in low:
-        return "远端 sshd 没起 或 port 22 被防火墙挡了"
+        return "The remote sshd is unavailable or the firewall is blocking port 22."
     if "connection closed" in low or "connection reset" in low:
-        return "服务器主动断（auth 失败 / MaxSessions 满 / 防火墙拦截）—— 远端 /var/log/auth.log 看具体原因"
+        return "The server closed the connection; inspect remote /var/log/auth.log for authentication, MaxSessions, or firewall errors."
     if "permission denied" in low or "publickey" in low:
-        return "免密 key 没配；ssh-copy-id 或检查 IdentityFile / authorized_keys"
+        return "Public-key authentication failed; run ssh-copy-id or check IdentityFile and authorized_keys."
     if "host key verification failed" in low:
-        return "host key 变了；ssh-keygen -R <host> 后再连"
-    return "检查 ssh alias / 网络 / 免密配置（手动跑一次 `ssh <alias>` 看错误）"
+        return "The host key changed; verify the host, then run ssh-keygen -R <host>."
+    return "Check the SSH alias, network, and authentication by running `ssh <alias>` manually."
 
 
 def classify(facts: dict, port: int, *,
@@ -90,16 +75,16 @@ def classify(facts: dict, port: int, *,
     env_ok = facts.get("ENV_OK") or "no"
     if not env_path:
         findings.append(Finding(
-            "info", "env_script", "未配置",
-            "如远端默认 shell 已 source CANN/torch_npu 可不填；否则"
-            " config.yaml: remote_worker.hosts.<alias>.env_script",
+            "info", "env_script", "Unconfigured",
+            "If the remote default shell does not load CANN and torch_npu, set "
+            "config.yaml: remote_worker.hosts.<alias>.env_script.",
         ))
     elif env_ok == "yes":
         findings.append(Finding("ok", "env_script", env_path, ""))
     else:
         findings.append(Finding(
-            "fatal", "env_script", f"配置为 {env_path} 但文件不存在",
-            "改 config.yaml: remote_worker.hosts.<alias>.env_script",
+            "fatal", "env_script", f"Configured path does not exist: {env_path}",
+            "Check config.yaml: remote_worker.hosts.<alias>.env_script.",
         ))
 
     # torch_npu: ascend backend hard dependency; non-ascend → warn at most.
@@ -108,12 +93,12 @@ def classify(facts: dict, port: int, *,
         findings.append(Finding("ok", "torch_npu", "importable", ""))
     elif ascendish:
         findings.append(Finding(
-            "fatal", "torch_npu", torch_result[:120] or "import 失败",
-            "env_script 缺 source CANN set_env.sh，或环境未装 torch_npu",
+            "fatal", "torch_npu", torch_result[:120] or "Import failed",
+            "Ensure env_script sources CANN set_env.sh and installs torch_npu.",
         ))
     else:
         findings.append(Finding(
-            "info", "torch_npu", "not importable", f"backend={backend}, 不需要",
+            "info", "torch_npu", "not importable", f"Not required for backend={backend}.",
         ))
 
     # triton: fatal only when target DSL needs it (triton_*).
@@ -122,10 +107,10 @@ def classify(facts: dict, port: int, *,
         findings.append(Finding("ok", "triton", "importable", ""))
     else:
         sev = "fatal" if needs_triton else "warn"
-        suggest = ("triton_* DSL 必需" if needs_triton
-                   else "仅 triton_* DSL 需要；其它 DSL 不装也能跑")
+        suggest = ("The selected Triton DSL requires the triton package." if needs_triton
+                   else "Only Triton DSLs require this package.")
         findings.append(Finding(
-            sev, "triton", triton_result[:80] or "import 失败", suggest,
+            sev, "triton", triton_result[:80] or "Import failed", suggest,
         ))
 
     # npu-smi: required for ascend backend.
@@ -134,11 +119,11 @@ def classify(facts: dict, port: int, *,
     elif ascendish:
         findings.append(Finding(
             "fatal", "npu-smi", "not in PATH",
-            "env_script 缺 source CANN set_env.sh",
+            "env_script missing source CANN set_env.sh",
         ))
     else:
         findings.append(Finding(
-            "info", "npu-smi", "not in PATH", f"backend={backend}, 不需要",
+            "info", "npu-smi", "not in PATH", f"Not required for backend={backend}.",
         ))
 
     # nvidia-smi: required for CUDA backend.
@@ -147,11 +132,11 @@ def classify(facts: dict, port: int, *,
     elif cudaish:
         findings.append(Finding(
             "fatal", "nvidia-smi", "not in PATH",
-            "CUDA worker 需要 nvidia-smi；检查驱动 / PATH / env_script",
+            "A CUDA worker requires nvidia-smi; check the driver, PATH, and env_script.",
         ))
     else:
         findings.append(Finding(
-            "info", "nvidia-smi", "not in PATH", f"backend={backend}, 不需要",
+            "info", "nvidia-smi", "not in PATH", f"Not required for backend={backend}.",
         ))
 
     # arch: backend-specific canonical token; no hard-coded fallback.
@@ -160,8 +145,8 @@ def classify(facts: dict, port: int, *,
         findings.append(Finding("ok", "npu arch", arch.lower(), ""))
     elif ascendish:
         findings.append(Finding(
-            "warn", "npu arch", "未能从 npu-smi 推断",
-            "传 --arch 显式指定（如 ascend910b3、ascend950pr）",
+            "warn", "npu arch", "Could not infer from npu-smi",
+            "Pass --arch explicitly, for example ascend910b3 or ascend950pr.",
         ))
 
     cuda_arch = (facts.get("CUDA_ARCH") or "").strip()
@@ -171,8 +156,8 @@ def classify(facts: dict, port: int, *,
         findings.append(Finding("ok", "cuda arch", result, ""))
     elif cudaish:
         findings.append(Finding(
-            "warn", "cuda arch", "未能从 nvidia-smi 推断",
-            "传 --arch 显式指定（如 a100、h100、rtx4090）",
+            "warn", "cuda arch", "Could not infer from nvidia-smi",
+            "Pass --arch explicitly, for example a100, h100, or rtx4090.",
         ))
 
     cpu_arch = (facts.get("CPU_ARCH") or "").strip()
@@ -181,7 +166,7 @@ def classify(facts: dict, port: int, *,
     elif cpuish:
         findings.append(Finding(
             "warn", "cpu arch", "platform.machine() returned empty",
-            "传 --arch 显式指定（如 x86_64、aarch64）",
+            "Pass --arch explicitly, for example x86_64 or aarch64.",
         ))
 
     # device count: backend-specific.
@@ -194,7 +179,7 @@ def classify(facts: dict, port: int, *,
     elif ascendish:
         findings.append(Finding(
             "fatal", "npu devices", "0 visible",
-            "驱动异常 / `npu-smi info` 跑不通；ssh 进去手动 verify",
+            "Check the driver and run `npu-smi info` manually over SSH.",
         ))
 
     try:
@@ -206,13 +191,13 @@ def classify(facts: dict, port: int, *,
     elif cudaish:
         findings.append(Finding(
             "fatal", "cuda devices", "0 visible",
-            "驱动异常 / `nvidia-smi -L` 跑不通；ssh 进去手动 verify",
+            "Check the driver and run `nvidia-smi -L` manually over SSH.",
         ))
 
-    # disk free (POSIX 远端 /tmp + / 取较小)。daemon 写日志一旦撞 ENOSPC，
-    # Python logging flush 失败会触发 "Logging error" cascade 灌爆终端，
-    # 用户根本看不到 root cause；提前 fatal 把这条路堵住。阈值 500MB —
-    # daemon log + worker_state.json + 各类临时文件加起来够用。
+    # Use the smaller free-space value from the remote POSIX /tmp and /
+    # filesystems. A daemon that hits ENOSPC can flood the terminal with
+    # secondary logging errors and hide the original failure. A 500 MB floor
+    # leaves room for logs, worker_state.json, and temporary files.
     try:
         free_mb = int(facts.get("DISK_FREE_MB") or "0")
     except ValueError:
@@ -223,9 +208,9 @@ def classify(facts: dict, port: int, *,
     elif free_mb > 0:
         findings.append(Finding(
             "fatal", "disk free", f"only {free_mb} MB",
-            "远端磁盘几乎满 —— daemon 写日志会 ENOSPC。清 /tmp、清旧日志后重试",
+            "The remote disk is almost full and daemon logging may fail with ENOSPC. Clear /tmp and old logs, then retry.",
         ))
-    # free_mb == 0 means df 调用失败，不报；不构成 fatal。
+    # A zero value means the remote df probe failed; it is not fatal by itself.
 
     # remote port owner: blocks --start; only informational for status diag.
     port_pid = (facts.get("PORT_PID") or "").strip()
@@ -234,9 +219,9 @@ def classify(facts: dict, port: int, *,
     else:
         sev = "fatal" if for_start else "warn"
         suggest = (
-            f"daemon 起不来 —— bind 会冲突。`ssh <alias> kill {port_pid}` "
-            f"或换 port" if for_start
-            else f"别人/残留 daemon — `ssh <alias> kill {port_pid}` 或换 port"
+            f"The daemon cannot bind this port. Run `ssh <alias> kill {port_pid}` or choose another port."
+            if for_start
+            else f"Another process owns the port. Run `ssh <alias> kill {port_pid}` or choose another port."
         )
         findings.append(Finding(
             sev, f"remote :{port}", f"held by PID {port_pid}", suggest,
@@ -256,7 +241,7 @@ def render_findings(findings: Iterable[Finding], log_tail: str = "") -> None:
     color = {"ok": "green", "info": "cyan", "warn": "yellow", "fatal": "red"}
     sym = {"ok": "✓", "info": "ⓘ", "warn": "⚠", "fatal": "✗"}
     console = Console(stderr=True)
-    table = Table(title="远端诊断", show_header=True)
+    table = Table(title="Remote diagnostics", show_header=True)
     table.add_column("Check", style="cyan")
     table.add_column("", width=2)
     table.add_column("Result")

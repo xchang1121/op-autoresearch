@@ -1,20 +1,23 @@
-# AutoResearch
+# AutoResearch workflow
 
-AutoResearch 用 Claude Code 或 OpenCode 驱动算子优化。用户提供 reference 和
-seed kernel，状态机按以下流程完成基线、计划、修改、评测和取舍：
+AutoResearch uses Claude Code or OpenCode to optimize operator kernels. The
+user supplies a reference implementation and a seed kernel; the state machine
+then establishes a baseline, plans an edit, evaluates it, and decides whether
+to keep the result:
 
 ```text
-BASELINE -> PLAN -> EDIT -> pipeline -> KEEP / DISCARD / FAIL
+BASELINE -> PLAN -> EDIT -> EVAL -> KEEP / DISCARD / FAIL
                                       -> REPLAN / DIAGNOSE / FINISH
 ```
 
-日常使用只需要 `/autoresearch`。阶段切换和约束由 hook/plugin 管理，不要手工
-修改 `.ar_state/state.json` 或 `.ar_state/plan.md`。
+Normal use requires only `/autoresearch`. Hooks and plugins manage phase
+transitions and constraints. Do not edit `.ar_state/state.json` or
+`.ar_state/plan.md` manually.
 
-## 1. 快速开始
+## 1. Quick start
 
-默认评测环境为 Linux。先进入工作区并加载包含 Python、硬件 SDK 和 DSL 依赖的
-环境脚本：
+The evaluation environment is normally Linux. Enter the repository and load
+the Python, hardware SDK, and DSL environment:
 
 ```bash
 cd <op-autoresearch-repo>
@@ -22,52 +25,53 @@ python -m pip install -e .
 source ~/env.sh
 ```
 
-确认目标设备和 Python 依赖可用，例如 Ascend 环境：
+Confirm that the target device and Python runtime are available. For example,
+an Ascend setup may use:
 
 ```bash
 npu-smi info
 python -c "import torch; import torch_npu"
 ```
 
-启动 Claude Code 或 OpenCode TUI：
+Start either interactive client:
 
 ```bash
 claude
-# 或
+# or
 opencode
 ```
 
-在 TUI 中创建任务：
+Create a task:
 
 ```text
 /autoresearch --ref workspace/<op>_ref.py --kernel workspace/<op>_kernel.py \
   --op-name <op> --devices <device-id>
 ```
 
-常用可选参数：
+Frequently used options:
 
-| 参数 | 说明 |
+| Option | Purpose |
 |---|---|
-| `--max-rounds N` | 最大优化轮数。 |
-| `--eval-timeout SEC` | 单个 shape 的评测预算。 |
-| `--output-dir DIR` | task_dir 父目录，默认 `ar_tasks/`。 |
-| `--worker-url HOST:PORT` | 使用已启动的远端 worker。 |
-| `--no-code-checker` | 对当前任务关闭 CodeChecker。 |
+| `--max-rounds N` | Maximum number of optimization rounds. |
+| `--eval-timeout SEC` | Wall-clock budget for one evaluation. |
+| `--output-dir DIR` | Parent directory for task output; defaults to `ar_tasks/`. |
+| `--worker-url HOST:PORT` | Use an already running remote worker. |
+| `--no-code-checker` | Disable CodeChecker for this task. |
 
-恢复任务：
+Resume a task:
 
 ```text
 /autoresearch --resume
 /autoresearch --resume <task_dir>
 ```
 
-查看进度：
+Monitor progress:
 
 ```bash
 python scripts/dashboard.py <task_dir> --watch
 ```
 
-OpenCode headless 单任务使用外层 loop：
+Run one headless OpenCode task:
 
 ```bash
 source ~/env.sh
@@ -77,38 +81,39 @@ python .opencode/run_loop.py \
   --op-name <op> --devices <device-id>
 ```
 
-## 2. 输入文件
+## 2. Input files
 
-### 2.1 Reference
+### 2.1 Reference implementation
 
-Reference 文件至少暴露：
+The reference file must expose at least:
 
 - `Model`
 - `get_init_inputs()`
-- `get_inputs()` 或 `get_input_groups()`
+- `get_inputs()` or `get_input_groups()`
 
-推荐命名：
+Recommended path:
 
 ```text
 workspace/<op>_ref.py
 ```
 
-与 reference 同名的 `.json`、`.pt`、`.npz` 输入文件会随任务复制和远端
-打包。路径应保持在 reference 所在目录内。
+Sidecar `.json`, `.pt`, and `.npz` inputs with the same base name are copied
+with the task and transferred to remote workers. Keep paths relative to the
+reference directory.
 
-### 2.2 Kernel
+### 2.2 Seed kernel
 
-单文件 DSL 的 seed kernel 暴露 `ModelNew`：
+A single-file DSL kernel exposes `ModelNew`:
 
 ```text
 workspace/<op>_kernel.py
 ```
 
-目录型 DSL 的 `--kernel` 指向项目目录；Python wrapper 放在相邻的
-`kernel.py`。实际可编辑范围写入 `task.yaml: editable_files`，agent 只能修改
-这些文件。
+Directory-based DSLs pass a directory to `--kernel`, with a Python wrapper in
+an adjacent `kernel.py`. The scaffold records the allowed edit set in
+`task.yaml: editable_files`; the agent must modify only those files.
 
-例如 CATLASS：
+Example directory layout:
 
 ```text
 workspace/<op>/
@@ -127,18 +132,20 @@ workspace/<op>/
   --op-name <op> --devices <device-id>
 ```
 
-`backend`、`framework`、`dsl` 和 skill 类型由 `config.yaml: defaults`
-指定；硬件 arch 由设备探测或 worker 提供。
+Defaults for `backend`, `framework`, `dsl`, and the skill family come from
+`config.yaml`. The worker detects the hardware architecture unless it is
+provided explicitly.
 
-## 3. 远端 worker
+## 3. Remote workers
 
-开发机运行 agent，Linux 评测机运行 worker。远端机器需要：
+A developer machine may run the agent while a Linux evaluation machine runs
+the worker. The remote machine needs:
 
-- OP_AUTORESEARCH checkout；
-- 可在非交互 SSH shell 中执行的 `env.sh`；
-- 目标 backend、DSL、SDK 和编译工具链。
+- a checkout of this repository;
+- an environment script that works in a non-interactive SSH shell;
+- the target backend, DSL, SDK, and compiler toolchain.
 
-开发机先配置 SSH alias，再在工作区 `config.yaml` 中登记：
+Configure an SSH alias, then register the host in `config.yaml`:
 
 ```yaml
 remote_worker:
@@ -149,7 +156,7 @@ remote_worker:
       ssh_alias: eval-host
 ```
 
-启动 worker 和本地 SSH tunnel：
+Start the worker and its local SSH tunnel:
 
 ```bash
 source ~/env.sh
@@ -157,31 +164,31 @@ op-autoresearch worker --remote-host eval-host --start \
   --backend ascend --arch ascend910b3 --devices 0
 ```
 
-检查状态：
+Check status:
 
 ```bash
 op-autoresearch worker --remote-host eval-host --status
 ```
 
-通过 tunnel 创建任务：
+Create a task through the tunnel:
 
 ```text
 /autoresearch --ref workspace/<op>_ref.py --kernel workspace/<op>_kernel.py \
   --op-name <op> --devices 0 --worker-url 127.0.0.1:<port>
 ```
 
-停止 worker 和 tunnel：
+Stop the worker and tunnel:
 
 ```bash
 op-autoresearch worker --remote-host eval-host --stop
 ```
 
-修改 worker 侧代码后需要同步 checkout 并重启 worker，已运行的 daemon 不会自动
-加载新代码。
+After changing worker-side code, synchronize the checkout and restart the
+worker. A running daemon does not reload source files automatically.
 
-## 4. 批量运行
+## 4. Batch execution
 
-Batch 目录使用以下布局：
+Use this layout:
 
 ```text
 <batch_dir>/
@@ -189,23 +196,24 @@ Batch 目录使用以下布局：
   kernels/<op>_kernel.py
 ```
 
-准备和预检：
+Prepare and pre-screen the batch:
 
 ```bash
 python scripts/batch/prepare.py <batch_dir>
 python scripts/batch/verify.py <batch_dir>
 ```
 
-使用正式 KernelVerifier 做完整预检：
+Run full verification through `KernelVerifier`:
 
 ```bash
 python scripts/batch/verify.py <batch_dir> --full --devices <device-id>
-# 远端 worker：
+
+# Remote worker:
 python scripts/batch/verify.py <batch_dir> --full \
   --worker-url 127.0.0.1:<port>
 ```
 
-运行、监控和汇总：
+Run, monitor, and summarize:
 
 ```bash
 python -u scripts/batch/run.py <batch_dir> --devices <device-id>
@@ -213,69 +221,69 @@ python scripts/batch/monitor.py <batch_dir>
 python scripts/batch/summarize.py <batch_dir>
 ```
 
-远端运行时给 `run.py` 增加
-`--worker-url 127.0.0.1:<port>`。常用筛选参数为 `--only`、`--limit` 和
-`--retry-errored`。
+For remote execution, add `--worker-url 127.0.0.1:<port>` to `run.py`.
+Useful filters include `--only`, `--limit`, and `--retry-errored`.
 
-## 5. Pipeline 与 trace
+## 5. Pipeline and traces
 
-每个 EDIT 轮次只实现当前 ACTIVE plan item，然后由 agent 运行：
+During each EDIT round, the agent implements the active plan item and runs:
 
 ```bash
 python scripts/engine/pipeline.py "<task_dir>"
 ```
 
-`pipeline.py` 依次执行 quick check、eval、KEEP/DISCARD/FAIL 结算和阶段切换。
-它完成后应继续遵循最后一条 `[AR Phase: ...]` 指引，不要自行推断下一阶段。
+The pipeline performs the quick check, evaluation, KEEP/DISCARD/FAIL
+settlement, and phase transition. After it completes, follow the final
+`[AR Phase: ...]` guidance instead of guessing the next phase.
 
-Ascend 任务需要性能时序证据时可启用 trace：
+Ascend tasks can collect timeline evidence:
 
 ```bash
 python scripts/engine/pipeline.py "<task_dir>" --trace
 ```
 
-该轮会在
-`.ar_state/op_autoresearch_verify/<op>/Iteration<op>_Step<round>_verify/` 下保留每个
-shape 的 profiling 产物，主要包括：
+Each trace is stored under:
 
-- `kernel_details.csv`、`op_statistic.csv`：逐 kernel/op 耗时，优先阅读；
-- `trace_view.json`：完整时间线，需要时用 Perfetto 或
-  `chrome://tracing` 查看。
+```text
+.ar_state/op_autoresearch_verify/<op>/Iteration<op>_Step<round>_verify/
+```
 
-后续 PLAN、REPLAN 或 DIAGNOSE guidance 会自动发现已有 trace 并提示对应路径，
-因此无需把 trace 内容手工复制进 plan 或状态文件。CUDA 路径不使用该 msprof
-trace。
+Important artifacts include:
 
-## 6. 任务状态和产物
+- `kernel_details.csv` and `op_statistic.csv` for per-kernel timing;
+- `trace_view.json` for a complete Perfetto or `chrome://tracing` timeline.
 
-常用文件：
+PLAN, REPLAN, and DIAGNOSE guidance discovers these artifacts automatically.
+CUDA tasks do not use the msprof trace path.
 
-| 文件 | 用途 |
+## 6. Task state and artifacts
+
+| Path | Purpose |
 |---|---|
-| `task.yaml` | 任务配置和 `editable_files`。 |
-| `.ar_state/state.json` | 当前 phase 和进度；只读。 |
-| `.ar_state/plan.md` | 当前计划；由 `create_plan.py` 管理。 |
-| `.ar_state/history.jsonl` | 每轮结果和 decision。 |
-| `.ar_state/report.md` | FINISH 报告。 |
-| `.ar_state/op_autoresearch_verify/` | verify、profile 和可选 trace 产物。 |
+| `task.yaml` | Task configuration and `editable_files`. |
+| `.ar_state/state.json` | Current phase and progress; treat as read-only. |
+| `.ar_state/plan.md` | Current plan, managed by `create_plan.py`. |
+| `.ar_state/history.jsonl` | Round results and decisions. |
+| `.ar_state/report.md` | Final report. |
+| `.ar_state/op_autoresearch_verify/` | Verification, profiling, and optional trace artifacts. |
 
-恢复和排查：
+Recovery guide:
 
-| 场景 | 操作 |
+| Situation | Action |
 |---|---|
-| 会话中断 | `/autoresearch --resume <task_dir>` |
-| 查看当前阶段 | `python scripts/dashboard.py <task_dir>` |
-| worker 不可达 | 先运行 `op-autoresearch worker --remote-host <alias> --status` |
-| tunnel 中断 | 再次执行同一条 worker `--start` 命令 |
-| 正确性失败 | 查看 pipeline 摘要和对应 verify 目录 |
-| 连续失败 | 让状态机进入 DIAGNOSE，不手改状态 |
+| Session interrupted | `/autoresearch --resume <task_dir>` |
+| Inspect current phase | `python scripts/dashboard.py <task_dir>` |
+| Worker unavailable | Run `op-autoresearch worker --remote-host <alias> --status`. |
+| Tunnel interrupted | Repeat the worker `--start` command. |
+| Correctness failure | Inspect the pipeline summary and corresponding verify directory. |
+| Repeated failures | Allow the state machine to enter DIAGNOSE; do not edit state manually. |
 
-## 7. Agent 本机配置
+## 7. Local client configuration
 
-共享的 hook、plugin 和权限配置随仓库提交。模型、endpoint 和 API key 只放本机
-配置，不入库：
+Shared hooks, plugins, and permission settings are versioned with the
+repository. Keep model endpoints and API keys in local-only files:
 
-- Claude Code：`.claude/settings.local.json`
-- OpenCode：`.opencode/opencode.json`
+- Claude Code: `.claude/settings.local.json`
+- OpenCode: `.opencode/opencode.json`
 
-API key 不要写入共享 `settings.json`、`config.yaml`、任务文件或日志。
+Never write API keys to shared settings, `config.yaml`, task files, or logs.

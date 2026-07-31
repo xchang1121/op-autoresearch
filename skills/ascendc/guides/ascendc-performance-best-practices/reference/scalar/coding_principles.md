@@ -1,49 +1,49 @@
-# Scalar 高性能编码原则
+# Scalar High Performance Coding Principles
 
-本文给出 9 条编写 Scalar 高性能算子的编码原则。每条原则的格式统一为：
+This document gives 9 coding principles for Scalar's high performance operator. The format of each principle is as follows:
 
-- **原理**：为什么这样写会让 Scalar 流水跑得更快
-- **识别要点**：在已有代码中识别该反模式的关键信号
-- **反例 / 正例**：可直接对照的代码模板（非真实算子代码，用于模式识别）
+- **Rationale**: Why does it make Scalar run faster?
+- **Identifier**: Key signals of this reverse pattern are identified in existing codes
+- **cross-referenced / good example**: a code template that can be directly cross-referenced (unreal operator code for mode recognition)
 
-> 所有原则的共同目标：**帮助编译器更好地进行寄存器分配、别名分析和常量传播，从而减少 Load/Store 指令**。
+> Common objectives of all principles:**Helping compiler to better distribute the register, analyse aliases and disseminate constants, thereby reducing the Load/Store Directive**.
 
 ---
 
-## P1 结构体内慎用数组
+## P1 use arrays carefully in the structure
 
-### 原理
+### Rationale
 
-结构体内的数组成员，如果通过**动态下标**（运行时变量）访问，会让编译器的**别名分析（Alias Analysis）**失败：编译器无法确定下标的具体值，必须考虑最坏情况——下标可能经过计算后恰好指向结构体中的其他成员。为了保证正确性，编译器会**放弃对整个结构体所有成员的常量传播**，改为从内存重新读取。该污染会沿继承/包含关系向上传播。
+An array of members in the structure, if accessed through**dynamic subscript**(runtime variable), would have failed in compiler's**alias analysis: compiler cannot determine the specific value of the subscript, and must consider the worst case - the subscript may have been calculated to point precisely to the other members of the structure. To ensure correctness, compiler**would have abandoned the constant transmission of all members of the entire structure**and reread it from memory. The contamination would have spread upwards along inheritance/inclusion relationships.
 
-### 识别要点
+### Identification points
 
-- 类/结构体中同时存在数组成员和需要常量优化的其他成员
-- 通过运行时变量（如 ping-pong 索引、循环变量）下标访问数组成员
-- profiling 中观察到「常量参数本应折叠却仍走 Load」的现象
+- There are also array members and other members in the class/structure who need constant optimization
+- Access to the members of the arrays by subscripting runtime variables (e. g. ping-pong index, loop variable)
+- The phenomenon of the "continent parameters that should have folded but still walk Load" was observed in the programring
 
-### 反例
+### Inversion
 
 ```cpp
 class Block {
-    event_t eventIds_[2] = {EVENT_ID0, EVENT_ID1};   // 数组成员
+    event_t eventIds_[2] = {EVENT_ID0, EVENT_ID1};   // Members of arrays
     event_t eventIdsM_[2] = {EVENT_ID2, EVENT_ID3};
-    uint16_t pingPongId_ = 0;                         // 运行时下标
-    uint32_t tileM_;                                  // 同结构体内其他成员被一起污染
+    uint16_t pingPongId_ = 0;                         // runtimeSubscript
+    uint32_t tileM_;                                  // Contaminated with other members of the structure.
 };
 
 void Block::Step() {
-    SetFlag<HardEvent::V_MTE2>(eventIds_[pingPongId_]);  // 动态下标
+    SetFlag<HardEvent::V_MTE2>(eventIds_[pingPongId_]);  // Dynamic Subscript
     pingPongId_ ^= 1;
-    // 即使 tileM_ 在编译期可推断为常量，也会被保守地走 Load
+    // Even if you can infer a constant during the compilation period, you'll go conservatively, Load.
 }
 ```
 
-### 正例
+### - Yes.
 
 ```cpp
 class Block {
-    event_t eventId_ = EVENT_ID0;                     // 拆为独立标量
+    event_t eventId_ = EVENT_ID0;                     // Split to Independencescalar
     event_t eventIdM_ = EVENT_ID2;
     uint16_t pingPongId_ = 0;
     uint32_t tileM_;
@@ -59,18 +59,18 @@ void Block::Step() {
 
 ---
 
-## P2 循环主尾块分离
+## P2 Cycle main tail block separation
 
-### 原理
+### Rationale
 
-热路径循环（如 Cube 类算子的 K-Reduce 循环）若在单一 `for` 内通过 `if` 处理首块、周期性事件、尾块，则**每轮迭代都执行 3 次分支判断**。Scalar 的分支预测器较简单，对"大多数迭代为 false 但偶尔为 true"的模式预测效果差；热路径中每次预测失败的代价被放大。
+Thermal routing (e.g.)CubeCategoryoperatorof K-Reduce  If in a single  `for`Adopted`if`Handle first, periodic events, tails, then**It's done every turn of time.3Subdivision judgement**.ScalarThe branch predictor is simpler, yes."Most of them are.falseBut once in a while,true"The model predicts poor results; the cost of each failure in the heat path is amplified.
 
-### 识别要点
+### Identification points
 
-- 热路径循环内出现 `if (k == 0)`、`if (k == maxK - 1)`、`if (k % N == 0)` 等模式
-- 循环次数大（数十~数百），且循环体含 MTE2 周期性 load 或首尾特殊处理
+- `if (k == 0)`, `if (k == maxK - 1)`, `if (k % N == 0)` etc. in the heat path cycle
+- Large number of cycles (tens-hundreds) with MTE2 periodic load or first-end special treatment
 
-### 反例
+### Inversion
 
 ```cpp
 for (uint64_t k = 0; k < maxK; ++k) {
@@ -82,15 +82,15 @@ for (uint64_t k = 0; k < maxK; ++k) {
 }
 ```
 
-### 正例
+### - Yes.
 
 ```cpp
-// Prologue：处理首块
+// Prologue: Handle header
 SetInitialParams();
 UpdateParams(0);
 Compute();
 
-// Hot Loop：零分支，仅纯计算与参数更新，周期事件被外层包住
+// Hot Loop: zero branch, pure calculation and parameter update only, cycle events wrapped in the outer layer
 uint64_t k = 1;
 uint64_t segmentEnd = loadStride;
 while (k < maxK - 1) {
@@ -99,45 +99,45 @@ while (k < maxK - 1) {
         segmentEnd += loadStride;
     }
     uint64_t end = (segmentEnd < maxK - 1) ? segmentEnd : maxK - 1;
-    for (; k < end; ++k) {           // 内层 for 内零分支
+    for (; k < end; ++k) {           // Internal for Internal Zero Branch
         UpdateParams(k);
         Compute();
     }
 }
 
-// Epilogue：处理尾块
+// Epilogue: handling tail blocks
 UpdateParams(maxK - 1);
 SetFinalParams();
 Compute();
 ```
 
-> 适用边界：循环次数 < 5 次时，三段式带来的代码膨胀可能触发 I-Cache miss，需权衡。
+> Application of the boundary: The three-part code inflation may trigger I-Cache miss when the number of cycles < 5 times is weighed.
 
 ---
 
-## P3 显式编写循环代码
+## P3 Visible writing loop code
 
-### 原理
+### Rationale
 
-`for` 循环的回跳走**专用循环硬件**，不经过分支预测器，不会发生 flush；同时编译器对显式循环更容易做循环展开、循环无关变量外提等优化。
-反之，通过 `while(Iterate())` 状态机隐式实现多维嵌套循环时，每次 Tile 切换都会触发大量进位判断（一次切换可能引发 3–5 次连续 mispredict）；状态机函数为处理各维度 Tail 与边界，代码体积通常很大（数百行），容易触发 I-Cache miss。
+`for`'s cycle's back-up**Pilot cycle hardware**does not occur in flush without a branch predictor; and compiler can optimise the visible cycle more easily by revolving, non-cycle unrelated variables, etc.
+On the contrary, pass.`while(Iterate())` state machineEvery time a hidden multi-dimensional loop is achievedTileThe switch triggers a lot of progress judgment.3–5Repeatedmispredict);state machineFunction to process dimensionsTailWith the boundary, the code size is usually large (hundreds of lines), easily triggered.I-Cache miss.
 
-### 识别要点
+### Identification points
 
-- 看到 `while(Iterate(self))`、`while(self->Next())` 等隐式状态机驱动循环
-- `Iterate` / `Next` 函数内部级联多个 `if (counter == limit) { counter = 0; ...higher_dim++ }` 进位判断
-- 函数体长（>200 行）、内部存在多层嵌套 `if` 处理维度切换
+- Sees `while(Iterate(self))`, `while(self->Next())`, the hidden state machine drive cycle.
+- `Iterate` / `Next` function multiple `if (counter == limit) { counter = 0; ...higher_dim++ }` digitals for internal cascades
+- Function length (>200 row), multilayer embedded in-house `if` processing dimension switching
 
-### 反例
+### Inversion
 
 ```cpp
-while (IterateMFirstMMode(self)) {     // 隐式状态机
+while (IterateMFirstMMode(self)) {     // Invisiblestate machine
     LoadAL1(self);
     IterateK(self);
     FreeTensor();
 }
 
-// IterateMFirstMMode 内部：
+// Iterate MFirstMMode inside:
 template <class Intf>
 inline bool IterateMFirstMMode(Intf* self) {
     if (IterateL0MFirstMMode(self)) return true;
@@ -147,12 +147,12 @@ inline bool IterateMFirstMMode(Intf* self) {
     self->ctx.batchIter++;
     if (self->ctx.batchIter != self->ctx.loopBatch) return true;
     self->ctx.batchIter = 0;
-    // ... 多层级联 ...
+    // It's a multi-level connection.
     return false;
 }
 ```
 
-### 正例
+### - Yes.
 
 ```cpp
 for (uint64_t nBL1 = 0; nBL1 < self->ctx.loopN; ++nBL1) {
@@ -165,7 +165,7 @@ for (uint64_t nBL1 = 0; nBL1 < self->ctx.loopN; ++nBL1) {
 
             for (uint64_t nL0 = 0; nL0 < self->ctx.l12l0LoopN; ++nL0) {
                 for (uint64_t mL0 = 0; mL0 < self->ctx.l12l0LoopM; ++mL0) {
-                    // L0 层计算
+                    // L0 Layer Calculating
                 }
             }
         }
@@ -175,49 +175,49 @@ for (uint64_t nBL1 = 0; nBL1 < self->ctx.loopN; ++nBL1) {
 
 ---
 
-## P4 尽量使用局部变量
+## P4 Use local variables as much as possible
 
-### 原理
+### Rationale
 
-局部变量与成员变量在编译器优化层面有三方面本质差异：
+There are three fundamental differences between local and member variables at the level of compiler optimization:
 
-1. **寄存器分配**：未取地址的局部变量可能从不进入内存；成员变量必须通过 `this`+offset 访问，每次读写至少一次内存访问。
-2. **别名分析**：未取地址的局部变量，编译器知道无其它指针能指向它，可大胆做寄存器复用；成员变量则因可能的指针别名，每次读取都可能需要重新 Load。
-3. **跨函数调用**：未取地址的局部变量可跨函数调用保持在寄存器中；成员变量被外部函数调用后须重新从内存加载。
+1. **Repositor distribution**: Local variables without an address may never enter memory; member variables must be accessed through `this`+offset at least once per reading and writing memory.
+2. **Analysis of aliases**: Local variables without an address, compiler knows that no other pointer can point to it and can be used boldly as a sender; member variables may need to be re-readed for possible pointer aliases.
+3. **Cross-functional call**: Local variables without an address can be called across functions and kept in the register; member variables are reloaded from memory when called by an external function.
 
-### 识别要点
+### Identification points
 
-- 类中存在仅在单个函数（或少数内联函数）中频繁访问的成员变量
-- 该成员变量在 kernel 生命周期内的值实际上不需要跨函数共享
-- 含 `this->xxx` 的热路径表达式特别多
+- There are member variables that are frequently visited only in a single function (or a few interconnective functions) in a class
+- The member variable does not actually need to be shared across functions during the Kernel life cycle
+- Thermal routing expressions with `this->xxx` are particularly numerous
 
-### 反例
+### Inversion
 
 ```cpp
 template <typename T>
 class FlashAttentionKernel {
 protected:
-    ConstParam constParam_;                          // 类成员
+    ConstParam constParam_;                          // Category members
 public:
     inline void Init() {
-        for (int i = 0; i < constParam_.iters; ++i) {       // 每轮 Load constParam_
+        for (int i = 0; i < constParam_.iters; ++i) {       // Every round Load constParam_
             DoStep(constParam_.scale);                       // this->constParam_.scale
         }
     }
 };
 ```
 
-### 正例
+### - Yes.
 
 ```cpp
 template <typename T>
 class FlashAttentionKernel {
 public:
     inline void Init() {
-        ConstParam constParam;                       // 局部变量，可全程驻留寄存器
-        // ... 初始化 constParam ...
+        ConstParam constParam;                       // Local variable, to stay in the repository for the entire journey
+        // Initializing constParam...
         for (int i = 0; i < constParam.iters; ++i) {
-            DoStep(constParam.scale);                 // 无 this 间接、无别名顾虑
+            DoStep(constParam.scale);                 // None this Indirect, no one else's concerns.
         }
     }
 };
@@ -225,35 +225,35 @@ public:
 
 ---
 
-## P5 变量定义贴近使用位置
+## P5 Variable definition of proximity position
 
-### 原理
+### Rationale
 
-编译器把变量映射到寄存器。变量的**活跃范围（Live Range）**——从定义到最后一次使用的代码范围——越长，该变量占用寄存器的时间越长。长活跃范围会挤压其他变量的寄存器空间，迫使编译器进行 Spill。贴近使用位置定义则可能让变量直接使用临时寄存器、甚至被优化掉。
+compiler maps the variable to the register. The longer the variable**active range (Live Range)**— from definition to last used code range — the longer the variable takes up the repository. The longer active range squeezes the memory space of other variables, forcing compiler to do Spill. The close location definition may allow the variable to use the temporary register directly, or even to be optimized.
 
-### 识别要点
+### Identification points
 
-- 函数顶部集中定义大量局部变量
-- 某个变量被定义后，跨越了大段（数十行以上）无关代码后才被使用
-- 函数中段有大量函数调用或重计算（寄存器压力大）
+- A large number of local variables are defined centrally at the top of the function
+- When a variable is defined, it crosses the irrelevant code in large sections (tens of lines or more) before it is used
+- Function segment with a large number of functions calling or recalculating (remister pressure high)
 
-### 反例
+### Inversion
 
 ```cpp
 void Foo() {
-    int a = 1;              // 活跃范围横跨整个函数
+    int a = 1;              // Active range crosses the function
     int b = 2;
     int c = 3;
 
-    DoHeavyWork();          // a/b/c 与重计算的临时值争寄存器
+    DoHeavyWork();          // a/b/c Recalculated temporary repository
     CallSubKernel();
     DoMoreWork();
 
-    Print(a, b, c);         // 真正使用在末尾
+    Print(a, b, c);         // Really use at the end
 }
 ```
 
-### 正例
+### - Yes.
 
 ```cpp
 void Foo() {
@@ -261,7 +261,7 @@ void Foo() {
     CallSubKernel();
     DoMoreWork();
 
-    int a = 1;              // 紧邻使用，活跃范围极短
+    int a = 1;              // It's in close proximity. It's a very short active range.
     int b = 2;
     int c = 3;
     Print(a, b, c);
@@ -270,73 +270,73 @@ void Foo() {
 
 ---
 
-## P6 避免多级指针解引用
+## P6 Avoid Multi-Level Pointing Reference
 
-### 原理
+### Rationale
 
-多级指针带来三方面问题：
+There are three kinds of questions:
 
-1. **访存延迟串行累加**：每一级解引用本质上是一条 Load 指令，且这些 Load 之间存在数据依赖（前一条 Load 的结果是下一条 Load 的地址）。
-2. **破坏数据局部性**：多级指针的各级地址可能散落在堆内存不同位置，每级解引用都可能触发 D-Cache miss。
-3. **编译器优化困难**：指针别名问题让编译器不确定指针的某一级内容是否会被其他写操作修改，每次解引用都必须从内存重新加载。
+1. **Visited latency string**: Each level of decitation is essentially a Load directive and there is data dependence among these Loads (the result of the previous Load is the address of the next Load).
+2. **Disruption of locality of data**: The addresses of multiple levels of pointers may be scattered at different locations within the stack, and each level of decitation may trigger a D-Cache miss.
+3. **compiler Optimizing**: The pointer symmetry problem makes compiler uncertain whether a certain level of content of the pointer will be modified by other writing operations, and every reference must be reloaded from memory.
 
-### 识别要点
+### Identification points
 
-- 类成员是指针类型，且通过该指针访问被指对象的成员
-- 形如 `obj_->member->field` 或 `tiling_->params->Kb` 的访问链
-- tiling/config 类参数通过指针长期持有
+- Class membership refers to the type of needle through which the target member is reached
+- Access chain like `obj_->member->field` or `tiling_->params->Kb`
+- Tiling/config type parameters are held permanently by pointer
 
-### 反例
+### Inversion
 
 ```cpp
 class Block {
-    const TCubeTiling* tiling_;     // 指针类型成员
+    const TCubeTiling* tiling_;     // Pointer type members
 public:
     bool IsTail(int kInner) {
-        return kInner + stepK_ >= tiling_->Kb;   // 2 次 Load：先 Load tiling_，再 Load tiling_->Kb
+        return kInner + stepK_ >= tiling_->Kb;   // 2 Numbers Load: First Load tiling_Again. Load tiling_->Kb
     }
 };
 ```
 
-### 正例
+### - Yes.
 
 ```cpp
 class Block {
-    AscendC::Shape<int64_t, int64_t, int64_t> problemShape_;   // 值类型聚合体 (M, N, K)
+    AscendC::Shape<int64_t, int64_t, int64_t> problemShape_;   // Value type polymers (M, N, K)
 public:
     bool IsTail(int kInner) {
-        return kInner + stepK_ >= Get<MNK_K>(problemShape_);    // 1 次 Load
+        return kInner + stepK_ >= Get<MNK_K>(problemShape_);    // 1 Numbers Load
     }
 };
 ```
 
 ---
 
-## P7 避免使用超大结构体
+## P7 Avoiding the use of superstructures
 
-### 原理
+### Rationale
 
-1. **缓存局部性差**：D-Cache cacheline 大小为 64 字节。结构体过大时，访问不同成员可能落在不同 cacheline 上，导致 D-Cache miss 增多。建议结构体 ≤ 64B（1 个 cacheline），最大不超过 128B。
-2. **寄存器溢出**：编译器无法将超大结构体完全放入寄存器，必须分配到栈内存上，每次访问成员都生成 Load/Store 指令。
-3. **指针传递引入别名**：为避免拷贝开销，大结构体常通过指针传递，但这引入别名问题——编译器无法确定两个指针是否指向同一内存，无法激进优化。
+1. **Cache locality difference**: D-Cache Cacheline is 64 bytes. When the structure is too big, access to different members may fall on different cachelines, resulting in an increase in D-Cache miss. Suggested structure ≤ 64B (1 cacheline) does not exceed 128B.
+2. **Depositor spill**: compiler is unable to fully place superstructures in the register and must be assigned to the vault memory and each visiting member generates a Load/Store command.
+3. **Screen transfer introduces aliases**: to avoid copying costs, large structures often pass through the pin, but this introduces the question of aliases — compiler cannot determine whether the two points point to the same memory and cannot be radically optimized.
 
-### 识别要点
+### Identification points
 
-- 单个 struct/class 的成员超过 10 个、估算尺寸 > 64B
-- "上帝结构体"：把不同计算阶段（L1/L0/事件/调试）的所有字段堆在同一个对象里
-- 接口签名出现 `void f(BigParam* a, BigParam* b, ...)`（多个同类型指针，别名风险）
+- Single struct/class with more than 10 members, estimated dimensions > 64B
+- "God's Structure": stacking all fields in the same object at different stages of computation (L1/L0/incident/debug)
+- interface signature `void f(BigParam* a, BigParam* b, ...)` (multiple pointers of the same type, aliases risk)
 
-### 反例
+### Inversion
 
 ```cpp
-struct GodParams {                  // ~200B，跨多个 cacheline
-    // L1 阶段
+struct GodParams {                  // ~200BOver and over. cacheline
+    // L1 Phase
     uint64_t l1A, l1B, l1ScaleA, l1ScaleB;
-    // L0 阶段
+    // L0 Phase
     uint64_t l0A, l0B, l0C;
-    // 事件
+    // Events
     event_t evV2MTE2, evV2MTE3, evMTE1_M, evM_FIX;
-    // tiling、调试标志
+    // Tiling, debugging signs
     TilingParams tiling;
     uint32_t debugFlags;
     // ...
@@ -344,20 +344,20 @@ struct GodParams {                  // ~200B，跨多个 cacheline
 
 void Compute(GodParams* a, GodParams* b) {
     a->l1A = ...;
-    b->l1A = ...;                   // 若 a == b，前一条赋值被覆盖
-    int x = a->l1A;                 // 编译器必须重新 Load
-    int y = a->l0C;                 // 与 l1A 在不同 cacheline
+    b->l1A = ...;                   // if a == b, the previous value is overwritten
+    int x = a->l1A;                 // compilerWe have to start over. Load
+    int y = a->l0C;                 // and l1A Different. cacheline
 }
 ```
 
-### 正例
+### - Yes.
 
 ```cpp
 struct L1Stage { uint64_t a, b, scaleA, scaleB; };           // 32B
 struct L0Stage { uint64_t a, b, c; };                         // 24B
 struct EventIds { event_t v2mte2, v2mte3, mte1_m, m_fix; };   // ≤ 32B
 
-void Compute(L1Stage l1, L0Stage l0) {                        // 按值传递，无别名
+void Compute(L1Stage l1, L0Stage l0) {                        // By value, no other name.
     l1.a = ...;
     l0.c = ...;
 }
@@ -365,29 +365,29 @@ void Compute(L1Stage l1, L0Stage l0) {                        // 按值传递，
 
 ---
 
-## P8 用 constexpr / 模板参数承载编译期常量
+## P8 Loads compilation period constants using constexpr/ template parameters
 
-### 原理
+### Rationale
 
-`const` 修饰的成员变量、或在构造函数中赋值的运行时常量，对编译器来说**仍是 runtime 值**——必须通过 Load 读取，且无法参与常量折叠（Constant Folding）和循环展开（Loop Unrolling）。
-改为 `constexpr` 或模板非类型参数后，该值在编译期就嵌入到生成代码中，进而能链式触发 P1 类常量传播优化（编译器一旦确认某个值为常量，就更愿意把相关变量也保持在寄存器中）。
+`const` modified member variables, or runtime constants given value in a construction function,**are still runtime values for compiler**- readable through Load and unable to participate in constant folding and revolving (Loop Unrolling).
+When changed to `constexpr` or the template is not a type parameter, the value is embedded in the generation code during the compilation period, thus triggering a chain-based optimization of the P1-class constant (compiler is more willing to keep the variable in the register once it has been confirmed as a constant).
 
-### 识别要点
+### Identification points
 
-- 类中含 `const` 成员变量、值在构造时确定但程序生命周期内不变
-- 在 host 侧本就以模板/编译期方式生成的 tiling 参数，却被以 runtime 入参方式传入 kernel
-- 形如 `for (int i = 0; i < kernel.tileM_; ++i)` 的循环，循环上限本应在编译期可知
+- Class consists of `const` member variables, values are determined at the time of construction but remain unchanged throughout the program life cycle
+- Tiling parameters generated in the host side as templates/compilation periods are entered in Kernel as runtime input
+- Queue like `for (int i = 0; i < kernel.tileM_; ++i)`, the maximum of which should have been known during the compilation period
 
-### 反例
+### Inversion
 
 ```cpp
 class Kernel {
-    const uint32_t tileM_;               // const 成员，对编译器仍是 runtime Load
+    const uint32_t tileM_;               // const Members, yes.compilerStill. runtime Load
     const uint32_t tileK_;
 public:
     Kernel(uint32_t m, uint32_t k) : tileM_(m), tileK_(k) {}
     void Run() {
-        for (uint32_t i = 0; i < tileM_; ++i) {        // 无法展开
+        for (uint32_t i = 0; i < tileM_; ++i) {        // Unable to expand
             for (uint32_t j = 0; j < tileK_; ++j) {
                 Compute(i, j);
             }
@@ -396,15 +396,15 @@ public:
 };
 ```
 
-### 正例
+### - Yes.
 
 ```cpp
-// 方案 A：模板非类型参数——值在类型中固化
+// Option A: Templates Nontype Parameters - Value solidified in Type
 template <uint32_t TILE_M, uint32_t TILE_K>
 class Kernel {
 public:
     void Run() {
-        for (uint32_t i = 0; i < TILE_M; ++i) {        // 可被完全展开
+        for (uint32_t i = 0; i < TILE_M; ++i) {        // It can be fully expanded.
             for (uint32_t j = 0; j < TILE_K; ++j) {
                 Compute(i, j);
             }
@@ -412,7 +412,7 @@ public:
     }
 };
 
-// 方案 B：constexpr static——全局编译期常量
+// Scheme B:constexpr status - Global compilation period constant
 class Kernel {
     static constexpr uint32_t TILE_M = 128;
     static constexpr uint32_t TILE_K = 64;
@@ -429,48 +429,48 @@ public:
 
 ---
 
-## P9 Hot Loop 内不构造对象、不取地址
+## P9 Hot Loop does not construct objects and does not remove addresses
 
-### 原理
+### Rationale
 
-1. **构造/析构展开后是大量 Store**：在热循环内构造对象，每轮迭代都会展开为对成员的逐项初始化 Store；带析构语义的对象还会在迭代末尾插入清理代码。
-2. **取地址迫使编译器 Spill**：对局部变量取地址（`&x`）意味着该地址可能传递到外部代码，编译器必须保守地假设变量在调用之后可能被修改，因此必须把变量放到栈上（Spill），不能保持在寄存器中。
-3. **取地址也阻碍别名分析**：被取地址的变量与其他指针之间无法证明非别名，污染周围代码的优化。
+1. **The construction/deconstruction is expanded to a large number of Store**: In the heat cycle, the object is constructed, and each of the rotations is initiated to the individual member, Store; objects with the semantic semantics are also inserted into the end of the iterative period.
+2. **The taking of the address forces compiler Spill**: Taking the address for the local variable (`&x`) means that the address may be passed to an external code, and compiler must conservatively assume that the variable may be modified after the call, and therefore the variable must be placed on the stack (Spill) and not kept in the repository.
+3. **Taking an address also hinders the analysis of aliases**: the non-alignment cannot be demonstrated between the variable from which the address is taken and the other pointer, contaminating the optimization of the surrounding code.
 
-### 识别要点
+### Identification points
 
-- 热循环内出现非平凡类型（如 `LocalTensor`、临时聚合体）的就地构造
-- 循环内出现 `Api(&x)` 形式调用，且 `x` 本可按值传递
-- 循环内对中间变量频繁取地址传给辅助函数
+- In situ construction of unusual types (e.g., `LocalTensor`, temporary polymers) in the thermal cycle
+- `Api(&x)` callable in cycle and `x` could have been passed by value
+- Frequently retrieve addresses for intermediate variables in the cycle to pass to auxiliary functions
 
-### 反例
+### Inversion
 
 ```cpp
-// 反例 #1：循环内构造 LocalTensor，每轮触发多个成员的初始化 Store
+// Example #1: LocalTensor inside cycle, triggers the initialization of multiple members per round
 for (int i = 0; i < N; ++i) {
-    LocalTensor<half> tmp = buf.Get<half>();      // 每轮重新构造
+    LocalTensor<half> tmp = buf.Get<half>();      // Reconstructing per wheel
     Compute(tmp, i);
 }
 
-// 反例 #2：循环内对局部变量取地址，强制 Spill 到栈
+// Reverse #2: Take address to local variables in the cycle, force Spill to the inn
 for (int i = 0; i < N; ++i) {
     uint32_t idx = i * 2;
-    LegacyApi(&idx);                              // &idx 触发 Spill，idx 无法驻留寄存器
+    LegacyApi(&idx);                              // &idx Trigger Spill,idx Can not get folder: %s: %s
 }
 ```
 
-### 正例
+### - Yes.
 
 ```cpp
-// 正例 #1：构造外提，循环内仅复用
+// Regular #1: Construct externals, recycle only
 LocalTensor<half> tmp = buf.Get<half>();
 for (int i = 0; i < N; ++i) {
     Compute(tmp, i);
 }
 
-// 正例 #2：能按值传递就按值传递；必须传地址时，把变量提升为循环不变量
+// Example #2: Transferable by value; raise the variable to a circular non-variant when an address must be passed
 for (int i = 0; i < N; ++i) {
     uint32_t idx = i * 2;
-    NewApi(idx);                                  // 按值传，idx 全程在寄存器
+    NewApi(idx);                                  // It's worth it.idx It's all over the register.
 }
 ```

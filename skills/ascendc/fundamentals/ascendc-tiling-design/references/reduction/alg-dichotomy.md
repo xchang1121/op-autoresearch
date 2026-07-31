@@ -1,50 +1,50 @@
-# 二分累加（Dichotomy Addition / Half-Interval）
+# Dichotomy Addition / Half-Interval
 
-**适用场景**: Sum 归约专用，解决顺序累加中大数吃小数的精度问题
+**Applicable scene**: Sum is dedicated to solving the accuracy problem of the order plus the large and medium edible
 
-**问题**: 顺序累加 `sum = a1 + a2 + a3 + ...` 时，当 sum 已经很大而后续元素很小，小数会因浮点精度被"吃掉"。
+******: When the sequence adds `sum = a1 + a2 + a3 + ...`, when the sum is already large and the subsequent element is small, the decimals will be "eat" because of the floating point accuracy.
 
-**原理**: 用二叉树结构折叠求和，使相近量级的数先相加。
+**Rationale**: Summation with a dident tree structure to add numbers at comparable scales.
 
-## 核心算法
+## Core algorithm
 
 ```cpp
 float DichotomyReduceSum(LocalTensor<float>& src, int count) {
-    // Step 1: 找到最大的 2^k ≤ count
+    // Step 1:Found the biggest2^k ≤ count
     int powerTwo = FindNextPower2LessEqual(count);
 
-    // Step 2: 尾部折叠
+    // Step 2: End folding
     int tail = count - powerTwo;
     if (tail > 0) {
         Add(src, src, src[powerTwo], tail);
-        // 变体（Half-Interval）：用 mask 保护尾部
+        // Variant (Half-Interval): protection of tail with mask
         // Add(src, src, src[powerTwo], GenMask(tail));
     }
 
-    // Step 3: 二分折叠
+    // Step 3: Double folding
     while (powerTwo > 64) {
         powerTwo /= 2;
         Add(src, src, src[powerTwo], powerTwo);
     }
 
-    // Step 4: WholeReduceSum 硬件指令（≤64 元素）
+    // Step 4: HoleReduceSum Hardware Command (≤64 Element)
     WholeReduceSum(result, src, powerTwo);
     return result;
 }
 ```
 
-## 与直接 ReduceSum 的对比
+## Compare with direct ReduceSum
 
-| 方面 | 顺序累加 ReduceSum | 二分累加 |
+| In terms of | Order Sum | Half plus |
 |------|-------------------|---------|
-| 精度 | 大数吃小数 | 相近量级先加，精度更好 |
-| 适用操作 | 仅 Sum | 仅 Sum（Max/Min 不受影响） |
-| UB 开销 | 无额外 | 原地操作，无额外 buffer |
-| 典型场景 | R ≤ VL，量级均匀 | R >> VL，量级差异大 |
+| accuracy | Eat a lot. | accuracy is better than that. |
+| Apply Operation | Sum only | Sum only (Max/Min is not affected) |
+| UB Expenditure | No Additional | In situ operation, no extra buffer |
+| Typical scene. | R ≤ VL, even scale | R > VL, big difference in volume |
 
-## 多行版本（MergeN 模式）
+## Multiline version (MergeN mode)
 
-利用 repeat stride 同时对多行做归约（来自 rms_norm / layer_norm 的 `reduce_common.h`）：
+Recapitulation of multiple lines with recapitulation (`reduce_common.h` from rms_norm / player_norm):
 
 ```cpp
 void ReduceSumMultiN(LocalTensor<float>& src, int numRows,

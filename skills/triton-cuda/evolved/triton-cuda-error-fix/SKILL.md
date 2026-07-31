@@ -1,6 +1,6 @@
 ---
 name: triton-cuda-error-fix
-description: triton-cuda常见错误及修复方法，用于代码生成时避免同类问题
+description: Frequent triton-cuda errors and fixes to avoid similar problems in code generation
 category: fix
 version: "1.0.0"
 metadata:
@@ -10,17 +10,17 @@ metadata:
   dsl: triton_cuda
 ---
 
-### 数学函数调用错误
+### Mathematical Functions Call Error
 
-- **报错特征**: `AttributeError: module 'triton.language' has no attribute 'tanh'`
-- **修复**:
-  - Triton CUDA 后端的数学函数需通过 `tl.extra.cuda.libdevice` 模块调用
-  - 避免直接使用 `tl.math.xxx` 或 `tl.xxx`
+- **Systems**: `AttributeError: module 'triton.language' has no attribute 'tanh'`
+- **Rehabilitation**:
+  - Triton CUDA backend mathematical function to be called through `tl.extra.cuda.libdevice` module
+  - Avoid direct use of `tl.math.xxx` or `tl.xxx`
 
 ```python
-# 错误：直接使用 tl.tanh
+# Error: Directly using tl.tanh
 result = 0.5 * x * (1.0 + tl.tanh(inner))
 
-# 正确：通过 libdevice 调用
+# Correct: Call through libdevice
 result = 0.5 * x * (1.0 + tl.extra.cuda.libdevice.tanh(inner))
 ```

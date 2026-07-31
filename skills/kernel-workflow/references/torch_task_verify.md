@@ -1,94 +1,94 @@
-# Task 代码格式验证指南
+# Task code format validation guide
 
-## 验证方式
+## Authentication Method
 
-使用 `execute_script` 执行验证脚本（同时进行静态检查和运行时检查）：
+Perform validation scripts using `execute_script` (both static and runtime):
 
 ```python
 execute_script(
     script_path="skills/kernel-workflow/scripts/check_torch_code.py",
     args="--stdin --json",
-    stdin_input="<task 代码>"
+    stdin_input="<task Code>"
 )
 ```
 
-## KernelBench 格式要求
+## KernelBench Format Requirements
 
-task 代码必须包含 4 个必需组件：
+The task code must contain four essential components:
 
 ```python
 import torch
 import torch.nn as nn
 
-class Model(nn.Module):         # 1. 必须继承 nn.Module
+class Model(nn.Module):         # 1. It must be inherited. nn.Module
     def __init__(self):
         super().__init__()
-        
-    def forward(self, x):       # 2. Model 类的方法
+
+    def forward(self, x):       # 2. Model Category method
         return torch.relu(x)
 
-def get_inputs():               # 3. 顶层函数，返回 list
+def get_inputs():               # 3. Top level function, return list
     return [torch.randn(16, 1024)]
 
-def get_init_inputs():          # 4. 顶层函数，返回 list
+def get_init_inputs():          # 4. Top level function, return list
     return []
 ```
 
-## 使用场景
+## Use scene
 
-1. **只有需求描述** → 无需验证，直接 `call_op_task_builder`
-2. **Torch task 代码** → 验证此代码，通过后加载 `tool-selection.md`
-3. **Kernel 代码 + Task 代码** → 验证 task 代码，通过后加载 `tool-selection.md`
+1. **Requirement description only**→ without authentication, direct `call_op_task_builder`
+2. **Totch task code**→ validates this code and loads `tool-selection.md` after adoption
+3. **Kernel code + Task code**→ validates tag code, post-load `tool-selection.md`
 
-## 验证结果处理
+## Validation Results Processing
 
-1. `"valid": true` → 验证通过，加载 `tool-selection.md` 选择生成方式
-2. `"valid": false` → 调用 `call_op_task_builder` 补全或修复：
+1. `"valid": true` → Validation pass, load `tool-selection.md` selection method
+2. `"valid": false` → Call `call_op_task_builder` to complete or repair:
 
 ```python
-call_op_task_builder(user_request="补全以下代码为 KernelBench 格式：\n<原代码>")
+call_op_task_builder(user_request="Complete the following code as KernelBench Format:\n<Original Code>")
 
-call_op_task_builder(user_request="修复以下代码的错误：\n<原代码>\n\n错误信息：<error>")
+call_op_task_builder(user_request="Fix an error in the following code:\n<Original Code>\n\nerror message:<error>")
 ```
 
 ---
 
-## Task 相关需求的处理（重要！）
+## Task related needs (important!)
 
-### 什么是 Task 需求
+### What is a Task demand?
 
-用户对 **task 代码**（而非 kernel 实现）的修改要求，这些需求通过 `call_op_task_builder` 处理，**不传递 `user_requirements`**：
-例如：
-1. 数据类型："输入改成 float16"、"使用 bfloat16"
-2. 输入shape："batch_size 改成 64"、"dim 改为 2048"
-3. 代码补全："补全 get_inputs"、"添加初始化"
+User 's requests for changes to**task code**(rather than kernel) which are processed through `call_op_task_builder`,**do not transmit `user_requirements`**:
+For example:
+1. data type: "Input to float16", "Use bflota16"
+2. Enter Shape: "Batch_size to 64" and "dim to 2048"
+3. Code Completion: "Purpose _inputs", "Add to Initialization"
 
-### 处理示例
-
-```
-用户: "把输入改成 float16"
-   → call_op_task_builder(user_request="修改 task 代码，将输入数据类型改为 float16：\n<原 task 代码>")
-
-用户: "batch_size 改成 128，dim 改成 4096"
-   → call_op_task_builder(user_request="修改 task 代码，batch_size=128，dim=4096：\n<原 task 代码>")
-```
-### 混合需求的处理
-
-如果用户同时有 task 需求和 kernel 需求，分开处理：
+### Treatment of examples
 
 ```
-用户: "生成 ReLU，输入 float16，核内二次切分"
+User: "Change input to float16"
+   → call_op_task_builder(user_request="Modify task Code, enterdata typewas replaced by float16:\n<Original task Code>")
+
+User: "batch_size Replace with 128,dim Replace with 4096"
+   → call_op_task_builder(user_request="Modify task Code,batch_size=128,dim=4096:\n<Original task Code>")
+```
+### Treatment of mixed needs
+
+If the user has both a request for task and a request for Kernel, deal separately:
+
+```
+User: "Generate ReLU,In float16Quantified nucleus."
          ↓
-   1. task 需求 "float16" → call_op_task_builder(user_request="生成 float16 的 ReLU")
-   2. 用户确认了task之后，kernel 需求 "核内二次切分" → call_coder_only(..., user_requirements="核内二次切分")
+   1. task Requirements "float16" → call_op_task_builder(user_request="Generate float16 of ReLU")
+   2. User confirmed.taskafterward,kernel Requirements "kernel dichotomy" → call_coder_only(..., user_requirements="kernel dichotomy")
 ```
-### 与 Kernel 需求的区分
+### Distinction from Kernel's needs
 
-- **Task 需求**：影响输入数据（类型、shape、 device设置与修改） → `call_op_task_builder`
-- **Kernel 需求**：影响实现策略（切分、优化、算法） → `user_requirements` 参数
+- **Task demand**: influence input data (types, shape, settings and modifications) → `call_op_task_builder`
+- **Kernel demand**: influence achievement policy (severation, optimization, algorithm) → `user_requirements` parameters
 
-## 注意事项
+## note
 
-1. **重要** 补全后无需重复验证（`call_op_task_builder` 内部保证格式正确）
-2. 混合文本需先提取纯代码部分
-3. **Task 相关需求不要传入 `user_requirements`**，应通过 `call_op_task_builder` 处理
+1. (`call_op_task_builder` internal assurance format correct)
+2. Mixed text must first extract a pure code part
+3. **Task-related needs do not enter `user_requirements`**and should be handled through `call_op_task_builder`

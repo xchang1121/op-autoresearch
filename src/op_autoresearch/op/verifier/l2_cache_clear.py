@@ -1,30 +1,16 @@
-# Copyright 2025 Huawei Technologies Co., Ltd
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """
-L2 Cache 清除模块。
+L2 Cache clears the module.
 
-提供 NPU L2 cache 清除功能，用于性能测试时确保测量结果不受缓存影响。
+Provides NPU L2 Cache clearance to ensure that measurements are not affected by caches during performance tests.
 
-支持两种清除方式：
-1. triton_ascend: 使用专用 triton kernel（推荐，可精确过滤）
-2. 其他 DSL: 使用 tensor.zero_()（fallback，有误判风险）
+Two types of clearance are supported:
+1. Triton_ascend: Use a special Triton Kernel (recommended, accurately filtered)
+2. Other DSL: Use tensor.zero_() (fallback, risk of error)
 """
 
 from typing import Literal, List
 
-# 延迟导入 torch/torch_npu，避免在 mindspore 环境下触发 aclInit 冲突
+# latency import torch/torch_npu to avoid triggering aclInit conflict in mindspore settings
 _torch = None
 _torch_npu = None
 
@@ -38,7 +24,7 @@ def _ensure_torch():
         _torch_npu = torch_npu
     return _torch, _torch_npu
 
-# 尝试导入 triton（可能未安装）
+# Try importing triton (possibly not installed)
 try:
     import triton
     import triton.language as tl
@@ -46,38 +32,38 @@ try:
 except ImportError:
     _TRITON_AVAILABLE = False
 
-# L2 cache 清除相关常量
-L2_CACHE_SIZE_DEFAULT = 192 * 1024 * 1024  # 192MB 默认值
-L2_CACHE_CLEAR_KERNEL_NAME = "OP_AUTORESEARCH_l2cache_clear"  # 专用 kernel 名称，用于过滤
+# L2 Cache clears associated constants
+L2_CACHE_SIZE_DEFAULT = 192 * 1024 * 1024  # 192MB Default
+L2_CACHE_CLEAR_KERNEL_NAME = "OP_AUTORESEARCH_l2cache_clear"  # Special kernel name for filtering
 
-# DSL 类型定义
+# DSL Type Definition
 DslType = Literal["triton_ascend", "triton_cuda", "torch", "tilelang_npuir", "ascendc", "other"]
 
 # ============================================================================
-# L2 Cache 警告消息收集（绕过 suppress_output）
+# L2 Cache Warning Collection (backside suppress_output)
 # ============================================================================
 
 _l2_cache_warnings: List[str] = []
 
 
 def _add_l2_cache_warning(message: str):
-    """添加警告消息到收集列表（绕过 suppress_output）"""
+    """Add warning messages to collection list (twirl suppress_output)"""
     _l2_cache_warnings.append(message)
 
 
 def get_l2_cache_warnings() -> List[str]:
-    """获取所有收集的 L2 cache 警告消息"""
+    """Fetch all collected L2 Cache warning messages"""
     return _l2_cache_warnings.copy()
 
 
 def clear_l2_cache_warnings():
-    """清空所有收集的 L2 cache 警告消息"""
+    """Empty all collected L2 Cache alerts"""
     global _l2_cache_warnings
     _l2_cache_warnings = []
 
 
 # ============================================================================
-# L2 Cache 大小检测
+# L2 Cache size test
 # ============================================================================
 
 _l2_cache_size_detected = None
@@ -85,19 +71,19 @@ _l2_cache_size_detected = None
 
 def _get_l2_cache_size(device_id: int = 0) -> int:
     """
-    从 NPU 设备属性获取 L2 cache 大小。
-    
+    Retrieving L2 size from NPU device properties.
+
     Args:
-        device_id: NPU 设备 ID
-        
+        Divity_id: NPU device ID
+
     Returns:
-        int: L2 cache 大小（字节）
+        Int: L2 Cache Size (bytes)
     """
     global _l2_cache_size_detected
-    
+
     if _l2_cache_size_detected is not None:
         return _l2_cache_size_detected
-    
+
     try:
         _, torch_npu = _ensure_torch()
         device_props = torch_npu.npu.get_device_properties(device_id)
@@ -107,13 +93,13 @@ def _get_l2_cache_size(device_id: int = 0) -> int:
             return l2_size
     except Exception:
         pass
-    
+
     _l2_cache_size_detected = L2_CACHE_SIZE_DEFAULT
     return _l2_cache_size_detected
 
 
 # ============================================================================
-# 获取核心数
+# Get core number
 # ============================================================================
 
 _core_nums_cache = None
@@ -121,9 +107,9 @@ _core_nums_cache = None
 
 def _get_core_nums(vec_default=40, cube_default=20):
     """
-    获取 NPU 核心数（VEC + CUBE）。
+    Get NPU core number (VEC + CUBE).
 
-    通过 triton runtime API 获取，结果缓存避免重复调用。
+    Accessed through triton runtime API, resulting in caches avoiding calls.
 
     Returns:
         tuple[int, int]: (vec_core_num, cube_core_num)
@@ -149,11 +135,11 @@ def _get_core_nums(vec_default=40, cube_default=20):
 
 
 # ============================================================================
-# Triton-Ascend 专用 L2 Cache 清除 Kernel（模块级别定义）
+# Triton-Asend dedicated L2 Cache Clear Kernel (module level definition)
 # ============================================================================
 
-# 在模块级别定义 triton kernel，避免 JIT 编译时作用域问题
-# 性能优化：使用大 BLOCK_SIZE 减少循环次数，提升带宽利用率
+# Define triton kernel at the module level, avoid JIT compilation domain problems
+# Performance optimization: use large BLONK_SIZE to reduce the number of cycles and increase the utilization of bandwidth
 if _TRITON_AVAILABLE:
     @triton.jit
     def OP_AUTORESEARCH_l2cache_clear(
@@ -163,31 +149,31 @@ if _TRITON_AVAILABLE:
         CORE_NUM: tl.constexpr,
     ):
         """
-        专用 L2 cache 清除 kernel。
-        
-        通过写入一个大 buffer 来强制刷新 L2 cache。
-        kernel 名称为 OP_AUTORESEARCH_l2cache_clear，便于在 profiler 结果中识别和过滤。
-        
-        使用交错循环处理，grid 大小等于核心数，参考 triton-ascend 编写规范。
-        大 BLOCK_SIZE 确保高带宽利用率，减少循环开销。
+        Specialized L2 Cache clears Kernel.
+
+        Force the updating of L2 Cache by writing to a big buffer.
+        Kernel is called OP_AUTORESEARCH_l2cache_clar, which allows for identification and filtering in profiller results.
+
+        Use the stagger cycle, grid size equal to core number, and refer to triton-ascend to prepare the norm.
+        Large BLONK_SIZE ensures high bandwidth utilization to reduce recycling costs.
         """
         pid = tl.program_id(0)
-        
-        # 计算总块数
+
+        # Calculate the total number of blocks
         num_blocks = tl.cdiv(n_elements, BLOCK_SIZE)
-        
-        # 交错循环处理：每个核心处理 pid, pid+CORE_NUM, pid+2*CORE_NUM, ... 块
-        # 这样所有数据都会被恰好处理一次，负载均衡
+
+        # Intersect cycle processing: per core processing pid, pid+CORE_NUM, pid+2*CORE_NUM,... block
+        # So all the data will be processed exactly once, and the load will be balanced.
         for block_idx in range(pid, num_blocks, CORE_NUM):
             block_start = block_idx * BLOCK_SIZE
             offsets = block_start + tl.arange(0, BLOCK_SIZE)
             mask = offsets < n_elements
-            # 写入 0 值来清除 cache
+            # Writing 0 Values to Clear Cache
             tl.store(output_ptr + offsets, tl.zeros([BLOCK_SIZE], dtype=tl.int32), mask=mask)
 
 
 # ============================================================================
-# L2 Cache Buffer 管理
+# L2 Cache Buffer Management
 # ============================================================================
 
 _l2_cache_buffer = None
@@ -195,65 +181,65 @@ _l2_cache_buffer = None
 
 def _get_l2_cache_buffer(device_id: int = 0):
     """
-    获取用于清除 L2 cache 的 buffer（PyTorch 版）。
-    使用惰性初始化，避免重复分配内存。
-    
+    Get a PyTorch version of the Buffer for clearing L2 Cache.
+    Use inert initialization to avoid duplicate distribution of memory.
+
     Args:
-        device_id: NPU 设备 ID
-        
+        Divity_id: NPU device ID
+
     Returns:
-        torch.Tensor: 足以覆盖 L2 cache 大小的 int32 tensor
+        Torch. Tensor: Int32 tensor that covers the size of L2 Cache
     """
     global _l2_cache_buffer
-    
+
     if _l2_cache_buffer is None:
         torch, _ = _ensure_torch()
         l2_size = _get_l2_cache_size(device_id)
         n_elements = l2_size // 4
         _l2_cache_buffer = torch.empty(n_elements, dtype=torch.int32, device='npu')
-    
+
     return _l2_cache_buffer
 
 
 # ============================================================================
-# L2 Cache 清除函数
+# L2 Cache Clear Function
 # ============================================================================
 
 def clear_l2_cache_triton():
     """
-    使用 triton-ascend kernel 清除 L2 cache。
-    
-    这是推荐的清除方式，因为：
-    1. 使用专用 kernel 名称 (OP_AUTORESEARCH_l2cache_clear)，便于在 profiler 中精确识别和过滤
-    2. 避免与用户代码中的 zeros/zero_ 操作混淆
-    
-    性能优化：
-    - 使用大 BLOCK_SIZE (32768) 减少循环次数
-    - grid 大小等于 VEC 核心数，充分利用并行度
+    Clear L2 Cache with triton-ascend Kernel.
+
+    This is the recommended method of clearance because:
+    1. Use a unique kernel name (OP_AutoRESEARCH_l2cache_clar) for precise identification and filtering in profiller
+    2. Avoid confusion with zeros/zero_operating in user code
+
+    Performance optimization:
+    - Use large BLONK_SIZE (32768) to reduce the number of cycles
+    - Grid size equals the VEC core, making full use of parallelity
     """
     if not _TRITON_AVAILABLE:
         raise RuntimeError("Triton not available for L2 cache clearing")
-    
+
     torch, _ = _ensure_torch()
     buffer = _get_l2_cache_buffer()
     n_elements = buffer.numel()
-    
+
     core_num, _ = _get_core_nums()
-    
+
     BLOCK_SIZE = 32768
-    
+
     grid = (core_num,)
-    
+
     OP_AUTORESEARCH_l2cache_clear[grid](buffer, n_elements, BLOCK_SIZE=BLOCK_SIZE, CORE_NUM=core_num)
     torch.npu.synchronize()
 
 
 def clear_l2_cache_zero():
     """
-    使用 tensor.zero_() 清除 L2 cache（fallback 方式）。
-    
-    警告：此方式会在 profiler 中记录为 "ZerosLike" 类型，
-    如果用户代码中也使用了 zeros_like/zero_()，可能导致误过滤。
+    Use tensor.zero_() to clear L2 Cache (fallback method).
+
+    Warning: This method will be recorded as \"ZerosLike\" type in profiler.
+    If zeros_like/zero_() are also used in the user code, this may lead to wrong filtering.
     """
     torch, _ = _ensure_torch()
     buffer = _get_l2_cache_buffer()
@@ -262,7 +248,7 @@ def clear_l2_cache_zero():
 
 
 # ============================================================================
-# MindSpore 版 L2 Cache Buffer 管理
+# MindSpore version L2 Cache Buffer Management
 # ============================================================================
 
 _l2_cache_buffer_ms = None
@@ -270,31 +256,31 @@ _l2_cache_buffer_ms = None
 
 def _get_l2_cache_buffer_ms():
     """
-    获取用于清除 L2 cache 的 buffer（MindSpore 版）。
-    使用惰性初始化，避免重复分配内存。
-    
-    MindSpore 的 AscendDeviceProperties 不提供 L2_cache_size，
-    因此使用默认值 L2_CACHE_SIZE_DEFAULT。
-    
+    Get the MindSpore version of the buffer used to clean L2 Cache.
+    Use inert initialization to avoid duplicate distribution of memory.
+
+    AscendDeviceProperties of MindSpore does not provide L2_cache_size.
+    So use the default L2_CACHE_SIZE_DEFAULT.
+
     Returns:
-        mindspore.Tensor: 足以覆盖 L2 cache 大小的 int32 tensor
+        Mindspore. Tensor: int32 tensor for L2 size
     """
     global _l2_cache_buffer_ms
-    
+
     if _l2_cache_buffer_ms is None:
         import mindspore as ms
         n_elements = L2_CACHE_SIZE_DEFAULT // 4
         _l2_cache_buffer_ms = ms.ops.zeros((n_elements,), dtype=ms.int32)
-    
+
     return _l2_cache_buffer_ms
 
 
 def clear_l2_cache_zero_ms():
     """
-    使用 MindSpore tensor.zero_() 清除 L2 cache。
-    
-    警告：此方式会在 profiler 中记录为 "ZerosLike" 类型，
-    如果用户代码中也使用了 zeros_like/zero_()，可能导致误过滤。
+    Use MindSpore tensor.zero_() to clear L2 Cache.
+
+    Warning: This method will be recorded as \"ZerosLike\" type in profiler.
+    If zeros_like/zero_() are also used in the user code, this may lead to wrong filtering.
     """
     import mindspore as ms
     buffer = _get_l2_cache_buffer_ms()
@@ -304,14 +290,14 @@ def clear_l2_cache_zero_ms():
 
 def clear_l2_cache(dsl: DslType = "other", framework: str = "torch"):
     """
-    清除 L2 cache 的统一入口函数。
-    
+    Clears the unified entry function for L2 cape.
+
     Args:
-        dsl: DSL 类型，决定使用哪种清除方式
-             - "triton_ascend": 使用专用 triton kernel（推荐，仅 torch 框架支持）
-             - 其他: 使用 tensor.zero_()（fallback）
-        framework: 框架类型 ("torch" 或 "mindspore")，决定使用哪套 tensor 接口
-    
+        dsl: DSL type, determine which method to remove
+             - \"triton_aspend\": with a dedicated triton kernel (recommended, torch framework only)
+             - Other: use tensor.zero_() (fallback)
+        ramework: framework type (\"toch\" or \"mindspore\"), determine which tensor interface to use
+
     Returns:
         None
     """
@@ -331,7 +317,7 @@ def clear_l2_cache(dsl: DslType = "other", framework: str = "torch"):
     else:
         if not hasattr(clear_l2_cache, '_warned_for_dsl'):
             clear_l2_cache._warned_for_dsl = set()
-        
+
         if dsl not in clear_l2_cache._warned_for_dsl:
             _add_l2_cache_warning(
                 f"[L2 Cache] Current DSL ({dsl}) has no dedicated L2 cache clear method. "
@@ -341,5 +327,5 @@ def clear_l2_cache(dsl: DslType = "other", framework: str = "torch"):
                 "For precise results, please analyze the specific operator manually."
             )
             clear_l2_cache._warned_for_dsl.add(dsl)
-        
+
         clear_l2_cache_zero()

@@ -1,6 +1,6 @@
 ---
 name: triton-ascend-case-reduction-amin-large
-description: "极大规模1D归约（amin）优化：二次切分避免超UB+计算重组减少归约次数，网格数接近AI Core数量（grid=32）、UB用满、无尾块时性能最优（9.61us），适用于极大规模1D数据（400万级元素）的全量归约场景"
+description: "Extreme scale 1D (amin) optimization: double-segregation avoids over-UB+ calculated reduction in the number of returns, grids close to the number of AI Cores (grid = 32), UBs with maximum performance when full and no tail block (9,61us), full-scale attribution scenarios for very large scale 1D data (4 million elements)"
 category: case
 version: "1.0.0"
 metadata:
@@ -9,12 +9,12 @@ metadata:
   hardware: "Atlas A2, Atlas A3"
 ---
 
-# 极大规模 1D Amin 归约优化
+# Extreme Large-scale 1D Amin Recession Optimization
 
-## 任务特征
-- **数据尺寸**：(4194304,)，极大规模1D数据
+## Task characteristics
+- **Data size**: (4194304,), very large 1D data
 
-## 优化 1：二次切分
+## Optimizing 1: Quadrant
 
 ```python
 pid = tl.program_id(0)
@@ -22,41 +22,41 @@ for start in range(0, BLOCK_SIZE, SUB_BLOCK_SIZE):
     offsets = pid * BLOCK_SIZE + start + tl.arange(0, SUB_BLOCK_SIZE)
 ```
 
-## 优化 2：计算重组
+## Optimization 2: Calculate reorganization
 
 ```python
-# 错误：简单
+# Error: Simple
 row_min = float('inf')
 for n_start in range(0, BLOCK_SIZE, SUB_BLOCK_SIZE):
     curr_min = tl.min(block_data)
     row_min = tl.minimum(curr_min, row_min)
 
-# 正确：优化
+# Correct: Optimization
 curr_min = tl.full((SUB_BLOCK_SIZE,), float('inf'), dtype=tl.float32)
 for start in range(0, BLOCK_SIZE, SUB_BLOCK_SIZE):
     curr_min = tl.minimum(curr_min, block_data)
 min_val = tl.min(curr_min)
 ```
 
-## Autotune 配置
+## Autotune Configuration
 
 ```python
-# （AI core=40）
-# 1. grid=16<40, UB用满 -> 15.12 us
+# (AI core=40)
+# 1. Grid = 16 < 40, UB full - > 15.12 us
 triton.Config({'BLOCK_SIZE': 262144, 'SUB_BLOCK_SIZE': 16384})
 
-# 2. grid=32<40, UB用满 -> 9.61 us 最优
+# Grid = 32 < 40, UB full - > 9.61 us best
 triton.Config({'BLOCK_SIZE': 131072, 'SUB_BLOCK_SIZE': 16384})
 
-# 3. grid=32, UB未用满 -> 10.29 us
+# Grid = 32, UB Unused - > 10.29 us
 triton.Config({'BLOCK_SIZE': 131072, 'SUB_BLOCK_SIZE': 8192})
 
-# 4. grid=40, UB用满, 有尾块 -> 10.17 us
+# 4. Grid = 40, UB full with tails - > 10.17 us
 triton.Config({'BLOCK_SIZE': 104858, 'SUB_BLOCK_SIZE': 16384})
 
-# 5. grid=64>40, UB用满 -> 11.64 us
+# Grid = 64>40, UB full - > 11.64 us
 triton.Config({'BLOCK_SIZE': 65536, 'SUB_BLOCK_SIZE': 32768})
 ```
 
-### 总结
-网格数接近AI Core数量、UB用满、无尾块时性能最优。二次切分避免超出硬件缓存。
+### Summary
+Grids are close to the number of AI Cores, the best performance when UBs are full and no tailings. A secondary cut avoids exceeding the hardware cache.

@@ -1,6 +1,6 @@
 ---
 name: triton-ascend-case-elemwise-broadcast-2d
-description: "2D广播除法优化：小维度完整处理不切分（循环外加载复用），通过固定NUM_BLOCKS实现核间并行（40核），核内SUB_M控制粒度平衡UB利用率，适用于broadcast轴大但非broadcast轴小的2D场景"
+description: "2D broadcasting is optimized: complete processing of small dimensions unseparated (recycling plus load reuse), inter-nuclear parallel (40 nucleus) through stationary NUM_BLONKS, and intra-nuclear SUB_M control particle size balance UB utilization, applicable to 2D scenarios with large but not small broadcast axes"
 category: case
 version: "1.0.0"
 metadata:
@@ -9,62 +9,62 @@ metadata:
   hardware: "Atlas A2, Atlas A3"
 ---
 
-# 2D Broadcast Division 优化案例
+# 2D Broadcast Disvision Optimization Case
 
-## 任务特征（两种配置）
+## Task characteristics (two configurations)
 
-### 配置1：(131072, 16) / (1, 16)
-- broadcast第一根轴
-- broadcast轴shape大(131072)，非broadcast轴shape小(16)
+### Configure 1: (131072, 16) / (1,16)
+- First Axis of Broadcast
+- broadcast size (131072), non-broadcast size (16)
 
-### 配置2：(2048, 131072) / (2048, 1)
-- broadcast第二根轴
-- broadcast轴中等(2048)，非broadcast轴shape大(131072)
+### Configure 2: (2048, 131072) / (2048, 1)
+- Second axis of Broadcast
+- Medium (2048) of broadcast axis, large (131072)
 
-## 优化 1：小维度完整处理不切分
+## Optimization 1: Complete processing of small dimensions
 
 ```python
-# N维度较小(N=16)，完整处理不切分
+# Smaller N-dimensional (N=16), complete uncut
 offs_n = tl.arange(0, N)  # N=16
 
-# divisor所有行共享，在循环外加载一次
+# All lines of divisor shared, loaded out of cycle once
 divisor = tl.load(divisor_ptr + offs_n)  # shape: (N,)
 
-# 内层循环：每次处理SUB_M行
+# Internal cycle: SUB_M rows per process
 for sub_start in range(row_start, row_end, SUB_M):
     offs_m = sub_start + tl.arange(0, SUB_M)
     dividend = tl.load(dividend_ptr + dividend_offs, mask=mask_2d, other=0.0)
-    output = dividend / divisor  # divisor广播: (N,) -> (SUB_M, N)
+    output = dividend / divisor  # divisorRadio: (N,) -> (SUB_M, N)
 ```
 
-### 优化内容
-- 由于N维度较小(N=16)，选择完整处理不切分，最大化UB利用率
-- divisor所有行共享，在循环外加载一次，循环内自动广播复用
-- 维度大小决定是否切分，而非广播方向
+### Optimizing content
+- Optimization of UB utilization due to small N-dimensional (N = 16), selection of complete treatment without cut-off
+- All lines of divisor shared, loaded out of cycle once, automatically broadcast reused in cycle
+- Whether the dimensions are divided, not the broadcast direction.
 
-## 优化 2：Grid切分配置
+## Optimize 2: Grid split configuration
 
 ```python
-# NUM_BLOCKS控制核数，SUB_M控制内部每次处理行数
-triton.Config({'NUM_BLOCKS': 40, 'SUB_M': 512}), # 8.55us，最优，核数=40，用满物理核
-triton.Config({'NUM_BLOCKS': 64, 'SUB_M': 512}), # 9.83us，核数>40，调度开销大
-triton.Config({'NUM_BLOCKS': 40, 'SUB_M': 256}), # 9.78us，ub未用满
-triton.Config({'NUM_BLOCKS': 40, 'SUB_M': 1024}), # 超ub
+# NUM_BLONKS Control Numeric Number, SUB_M Control Internal Processing Lines
+triton.Config({'NUM_BLOCKS': 40, 'SUB_M': 512}), # 8.55usThe best, the number.=40With all the physics.
+triton.Config({'NUM_BLOCKS': 64, 'SUB_M': 512}), # 9.83usQuantified>40Control costs are high.
+triton.Config({'NUM_BLOCKS': 40, 'SUB_M': 256}), # 9.78us,ubUnused
+triton.Config({'NUM_BLOCKS': 40, 'SUB_M': 1024}), # Super.ub
 grid = lambda meta: (meta['NUM_BLOCKS'],)
 ```
 
-### 优化内容
-- 通过grid切分M维度，控制核数≤40
-- SUB_M=512时在UB利用率和寄存器压力之间达到平衡
+### Optimizing content
+- Control the core number ≤40 by grid cutting in M-dimensional.
+- SUB_M = 512 hours to balance UB utilization and memory pressure
 
-## 优化 3：通用2D调度方法
+## Optimization 3: Universal 2D schedule method
 
-对于一般的2D shape，通用调度方法：
-1. **核间并行（NUM_BLOCKS）**：沿M维度切分，分配到不同计算核
-2. **核内行切分（SUB_M）**：控制每次处理的行数，平衡UB利用率
-3. **列向量化（BLOCK_N）**：沿N维度分块加载，实现连续访问和向量化
+For general 2D Shape, generic method of movement:
+1. **Nuclear Parallels (NUM_BLONKS)**: split along MD and distributed to different calculator cores
+2. **SUB_M)**: control of the number of lines per process to balance UB utilization
+3. **Column vector (BLONK_N)**: Loading along N-dimensional segments to achieve continuous access and vector
 
-### 总结
-1. 对于较小的维度，应完整处理不切分以最大化UB利用率
-2. 通过固定NUM_BLOCKS实现核间并行，核内参数切分控制数据粒度
-3. 可通过autotune参数进行调优
+### Summary
+1. For smaller dimensions, non-ditation should be fully addressed in order to maximize UB utilization
+2. Inter-nuclear parallelation by stationary NUM_BLONKS and control of data particles by nucleometric splits
+3. Align with autotune parameters

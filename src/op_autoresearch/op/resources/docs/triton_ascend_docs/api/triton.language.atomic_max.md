@@ -2,8 +2,8 @@
 ```python
 tl.atomic_max(max_ptr, local_max)
 ```
-- **参数**:
-  - `pointer`: 目标内存指针
-  - `value`: 要比较的值
-- **用途**: 线程安全的最大值更新
+- **Parameters**:
+  - `pointer`: Target memory pointer
+  - `value`: Value to compare
+- **Pilot**: maximum value update for thread security
 

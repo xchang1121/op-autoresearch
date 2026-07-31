@@ -1,6 +1,6 @@
 ---
 name: tilelang-cuda-memory
-description: "TileLang CUDA 内存访问优化策略，包括 T.alloc_shared/fragment 使用、数据布局优化、合并访存和 Bank Conflict 避免技巧。适用于内存带宽受限、需要优化数据搬运效率的 TileLang 内核性能优化场景"
+description: "TileLang CUDA memory access optimization policy, including T.alloc_shared/fragment use, data layout optimization, combined access and Bank Conflict avoidance techniques. TileLang kernel performance optimization scenarios for memory bandwidth limited and need to optimize data removal efficiency"
 category: implementation
 version: "1.0.0"
 metadata:
@@ -8,103 +8,103 @@ metadata:
   dsl: tilelang_cuda
 ---
 
-# TileLang CUDA 内存访问优化
+# TileLang CUDA memory access optimization
 
-内存访问是 GPU 性能的关键瓶颈。本文档提供 TileLang CUDA 的内存访问优化策略。
+Memory access is a key bottleneck for GPU performance. This document provides a memory access optimization policy for TileLang CUDA.
 
 ---
 
-## 1. GPU 内存层次
+## 1. GPU Memory Level
 
-### 内存带宽和延迟
+### Memory bandwidth and latency
 
-| 内存类型 | 带宽 (A100) | 延迟 | 容量 | TileLang API |
+| Memory Type | bandwidth (A100) | latency | Capacity | TileLang API |
 |---------|-------------|------|------|-------------|
-| 寄存器 | ~19 TB/s | 1 cycle | 256 KB/SM | `T.alloc_fragment` / `T.alloc_local` |
-| 共享内存 | ~19 TB/s | ~20 cycles | 164 KB/SM | `T.alloc_shared` |
-| L2 缓存 | ~5 TB/s | ~100 cycles | 40 MB | `T.use_swizzle` 优化 |
-| 全局内存 (HBM) | ~2 TB/s | ~400 cycles | 40/80 GB | `T.Tensor` |
+| Organisation | ~19 TB/s | 1 cycle | 256 KB/SM | `T.alloc_fragment` / `T.alloc_local` |
+| shared memory | ~19 TB/s | ~20 cycles | 164 KB/SM | `T.alloc_shared` |
+| L2 Cache | ~5 TB/s | ~100 cycles | 40 MB | `T.use_swizzle` Optimization |
+| global memory (HBM) | ~2 TB/s | ~400 cycles | 40/80 GB | `T.Tensor` |
 
-### 优化原则
-- **减少全局内存访问**: 利用共享内存和寄存器缓存数据
-- **合并访问 (Coalesced Access)**: 使用 `T.copy` 进行高效数据传输
-- **提高 L2 缓存命中率**: 使用 `T.use_swizzle` 优化数据局部性
+### Optimization principle
+- **Reduced global memory access**: Using shared memory and depository cache data
+- **Merge Access**: Efficient data transfer using `T.copy`
+- **Increased L2 Cache Liferate**: Optimizing locality of data using `T.use_swizzle`
 
 ---
 
-## 2. 内存分配最佳实践
+## 2. Memory distribution best practice
 
-### 共享内存（频繁访问的数据）
+### shared memory (data frequently accessed)
 
 ```python
-# 共享内存用于缓存从全局内存加载的数据块
+# shared memory for caches loaded from global memory
 A_shared = T.alloc_shared((block_M, block_K), "float16")
 B_shared = T.alloc_shared((block_K, block_N), "float16")
 
-# 高效数据加载
+# Efficient data loading
 T.copy(A[by * block_M, ko * block_K], A_shared)
 ```
 
-**适用场景**：
-- 矩阵乘法中的输入块
-- 多次访问的中间数据
-- 需要线程间共享的数据
+**Applicable scene**:
+- Input block in matrix multiplication
+- Median data from multiple visits
+- Need data shared between threads
 
-### 寄存器片段（累加器和临时存储）
+### Repository Snippets (cumulators and temporary storage)
 
 ```python
-# 寄存器用于累加和局部计算
+# Storer used for cumulative and local calculations
 C_local = T.alloc_fragment((block_M, block_N), "float")
 T.clear(C_local)
 
-# 累加操作
+# Aggregation Operations
 T.gemm(A_shared, B_shared, C_local)
 ```
 
-**适用场景**：
-- 矩阵乘法累加器
-- 归约的临时结果
-- 局部计算结果
+**Applicable scene**:
+- matrix multiplication Composer
+- Provisional outcome of the return
+- Local calculations
 
-### 本地内存（线程私有存储）
+### Local memory (lined private storage)
 
 ```python
-# 本地内存用于线程私有变量
+# Local memory for line private variables
 C_reg = T.alloc_local((1,), "float")
 T.clear(C_reg)
 ```
 
-**适用场景**：
-- 单个线程的累加值
-- 线程局部的临时变量
+**Applicable scene**:
+- Accumulation of single threads
+- Temporary variable for a local thread
 
 ---
 
-## 3. 数据传输优化
+## 3. Data transfer optimization
 
-### 使用 T.copy 进行合并访问
+### Use T.copy for combined access
 
 ```python
-# ✅ 推荐：使用 T.copy 自动合并访问
+# ✅ Recommendations: Automatically merge access with T.copy
 T.copy(A[by * block_M, ko * block_K], A_shared)
 T.copy(B[ko * block_K, bx * block_N], B_shared)
 
-# ✅ 结果写回
+# ✅ results returned
 T.copy(C_local, C[by * block_M, bx * block_N])
 ```
 
-### 使用 T.Parallel 进行并行数据复制
+### Use T. Parallel for parallel data copying
 
 ```python
-# 并行数据复制
+# Parallel data copying
 for k, j in T.Parallel(block_K, block_N):
     B_shared[k, j] = B[ko * block_K + k, bx * block_N + j]
 ```
 
-### 使用向量化加载
+### Load with vector
 
 ```python
-# 向量化加载以提高带宽利用率
+# vector loading to increase bandwidth utilization
 for k in T.vectorized(TILE_K):
     A_local[k] = A[bk * BLOCK_K + tk * TILE_K + k]
     B_local[k] = B[bn * BLOCK_N + tn, bk * BLOCK_K + tk * TILE_K + k]
@@ -112,50 +112,50 @@ for k in T.vectorized(TILE_K):
 
 ---
 
-## 4. 软件流水线
+## 4. Software pipeline
 
-### 基本用法
+### Basic use
 
 ```python
-# 使用 T.Pipelined 实现软件流水线
+# Use T. Pipelined to achieve software pipeline
 for ko in T.Pipelined(T.ceildiv(K, block_K), num_stages=3):
-    # 数据加载和计算自动重叠
+    # Loading data and calculating automatic overlap
     T.copy(A[by * block_M, ko * block_K], A_shared)
     T.copy(B[ko * block_K, bx * block_N], B_shared)
     T.gemm(A_shared, B_shared, C_local)
 ```
 
-### num_stages 选择指南
+### Num_stages Selection Guide
 
-| num_stages | 共享内存使用 | 性能 | 适用场景 |
+| num_stages | Use shared memory | Performance | Apply scene |
 |-----------|-------------|------|---------|
-| 2 | 最少 | 基础 | 共享内存紧张时 |
-| 3 | 中等 | 通常最优 | 默认推荐 |
-| 4 | 较多 | 大矩阵时更优 | 共享内存充足时 |
-| 5+ | 很多 | 可能下降 | 需要测试验证 |
+| 2 | At least. | Basis | When shared memory is nervous |
+| 3 | Medium | Usually the best. | Default Recommended |
+| 4 | More. | It's better when it's a big matrix. | When shared memory is sufficient |
+| 5+ | A lot. | It could drop. | Test Validation Required |
 
 ---
 
-## 5. L2 缓存优化
+## 5. L2 Cache Optimization
 
-### Swizzle 光栅化
+### Swizzle Scatter
 
-通过 `T.use_swizzle` 改善 L2 缓存局部性，特别适用于矩阵乘法等 2D 计算：
+Improves the locality of the L2 cache by `T.use_swizzle`, especially for the calculation of 2D for matrix multiplication etc.:
 
 ```python
 with T.Kernel(T.ceildiv(N, block_N), T.ceildiv(M, block_M), threads=128) as (bx, by):
-    # 启用 swizzle 以提高 L2 缓存命中率
+    # Enable swizzle to increase the L2 Cache Hit Rate
     T.use_swizzle(panel_size=10, enable=True)
-    
-    # ... 计算逻辑 ...
+
+    # ...calculating logic...
 ```
 
-### 布局注解
+### Layout Comment
 
 ```python
 from tilelang.intrinsics import make_mma_swizzle_layout
 
-# 使用布局注解优化共享内存访问模式
+# Use layout note to optimize shared memory access mode
 T.annotate_layout({
     A_shared: make_mma_swizzle_layout(A_shared),
     B_shared: make_mma_swizzle_layout(B_shared),
@@ -164,29 +164,29 @@ T.annotate_layout({
 
 ---
 
-## 6. 分块大小选择
+## 6. Block Size Selection
 
-### 推荐设置
+### Recommended Settings
 
-| 算子类型 | block 大小 | 线程数 | 说明 |
+| operator Type | Block Size | Threads | Annotations |
 |---------|-----------|-------|------|
-| Element-wise | block=256~1024 | 128-256 | 一维并行 |
-| GEMM | M=128, N=128, K=32 | 128 | 二维分块 |
-| GEMV | N=64~256, K=32~128 | 128 | 一维 + 串行 |
-| Reduce | block=256~512 | 128-256 | 归约维度分块 |
-| LayerNorm | block=256 | 256 | 按行处理 |
+| Element-wise | block=256~1024 | 128-256 | One-dimensional parallel. |
+| GEMM | M=128, N=128, K=32 | 128 | Two-dimensional segment |
+| GEMV | N=64~256, K=32~128 | 128 | 1-D + Serial |
+| Reduce | block=256~512 | 128-256 | Reunification dimension segment |
+| LayerNorm | block=256 | 256 | Deal by Line |
 
-### 选择原则
-- **平衡并行度与资源占用**: 避免过大或过小
-- **使用 2 的幂次**: 便于硬件优化
-- **考虑共享内存限制**: 每个 SM 通常 164 KB
-- **考虑寄存器压力**: 过大的 fragment 可能导致溢出
+### Selection principle
+- **Balancing parallelity and resource consumption**: avoid being too large or too small
+- **Use 2 indents**: to facilitate hardware optimization
+- **Consider shared memory limits**: Each SM normal 164 KB
+- **Consider the memory pressure**: too large a fragment could cause spills
 
 ---
 
-## 7. 完整优化示例
+## 7. Full Optimization Example
 
-### 优化的矩阵乘法
+### Optimized matrix multiplication
 
 ```python
 import tilelang
@@ -199,57 +199,57 @@ def optimized_matmul(M, N, K, block_M, block_N, block_K):
     def main(A: T.Tensor((M, K), "float16"),
              B: T.Tensor((K, N), "float16"),
              C: T.Tensor((M, N), "float16")):
-        
+
         with T.Kernel(T.ceildiv(N, block_N), T.ceildiv(M, block_M), threads=128) as (bx, by):
-            # 1. 内存分配
+            # 1. Distribution of memory
             A_shared = T.alloc_shared((block_M, block_K), "float16")
             B_shared = T.alloc_shared((block_K, block_N), "float16")
             C_local = T.alloc_fragment((block_M, block_N), "float")
-            
-            # 2. 布局优化
+
+            # 2. Layout optimization
             T.annotate_layout({
                 A_shared: make_mma_swizzle_layout(A_shared),
                 B_shared: make_mma_swizzle_layout(B_shared),
             })
-            
-            # 3. L2 缓存优化
+
+            # 3. L2 Cache optimization
             T.use_swizzle(panel_size=10, enable=True)
-            
+
             T.clear(C_local)
-            
-            # 4. 软件流水线
+
+            # 4. Software pipeline
             for ko in T.Pipelined(T.ceildiv(K, block_K), num_stages=3):
                 T.copy(A[by * block_M, ko * block_K], A_shared)
                 T.copy(B[ko * block_K, bx * block_N], B_shared)
                 T.gemm(A_shared, B_shared, C_local)
-            
-            # 5. 结果写回
+
+            # 5. Return of results
             T.copy(C_local, C[by * block_M, bx * block_N])
-    
+
     return main
 ```
 
 ---
 
-## 8. 最佳实践总结
+## 8. Summary of best practice
 
-### 内存分配
-1. **共享内存**: 用于频繁访问的数据块
-2. **寄存器片段**: 用于累加器和临时计算
-3. **本地内存**: 用于线程私有变量
+### Memory Allocation
+1. **shared memory**: Data block for frequent access
+2. **Repositor clip**: used for compressors and temporary calculations
+3. **Local memory**: for linear private variables
 
-### 数据传输
-1. **使用 T.copy**: 自动合并内存访问
-2. **使用 T.Pipelined**: 重叠数据加载和计算
-3. **使用 T.vectorized**: 向量化数据加载
+### Data Transfer
+1. **Use T.copy**: Automatically merge memory access
+2. **Using T. Pipelined**: Overlap data loading and calculation
+3. **Loaded with T.vectorize**: vector
 
-### 缓存优化
-1. **T.use_swizzle**: 优化 L2 缓存局部性
-2. **T.annotate_layout**: 优化共享内存访问模式
-3. **合理分块**: 平衡并行度和缓存利用
+### Cache Optimization
+1. **T.use_swizzle**: Optimizing L2 Cache Locality
+2. **T. annotate_layout**: Optimizing shared memory access mode
+3. **Rational segment**: balancing parallelity and cache utilization
 
-### 避免的陷阱
-- 过大的共享内存分配导致 occupancy 下降
-- 忽略软件流水线优化
-- 分块大小设置不当导致内存访问效率低
-- 忘记 L2 缓存优化
+### A trap to avoid.
+- Oversized shared memory distribution caused occupancy to drop
+- Ignore software pipeline optimization
+- Inefficient memory access due to inappropriate block size setting
+- Forget L2 Cache Optimization

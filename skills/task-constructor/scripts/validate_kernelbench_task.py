@@ -1,43 +1,29 @@
 #!/usr/bin/env python3
-# Copyright 2026 Huawei Technologies Co., Ltd
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """
-KernelBench 任务代码验证脚本
+KernelBench Task Code Authentication Script
 
-验证代码是否符合 KernelBench 格式并通过运行时检查。
+Verify if the code matches KernelBench format and check by runtime.
 
-检查项目:
-1. 静态: class Model(nn.Module), forward, get_inputs, get_init_inputs
-2. 运行时: exec → Model() → forward() → NaN/Inf 检查 → 一致性检查
+Inspection items:
+Static: class Model (nn. Modele), forward, get_inputs, get_init_inputs
+runtime: exec → Model() → forward() → NN/Inf check for → consistency
 
-用法:
-    # 验证文件
+Usage:
+    # Authentication file
     python validate_kernelbench_task.py path/to/task.py
 
-    # 从标准输入读取
+    # Read from standard input
     echo "import torch..." | python validate_kernelbench_task.py --stdin
 
-    # 只做静态检查
+    # Just do static checks
     python validate_kernelbench_task.py --stdin --static-only
 
-    # JSON 格式输出
+    JSON format output
     python validate_kernelbench_task.py --stdin --json
 
-输出格式:
-    [VALID] 代码符合 KernelBench 格式
-    [INVALID] 代码不符合格式 + 原因 + 修复建议
+Output format:
+    [VALIID] Code corresponds to KernelBench format
+    [INVALID] Code does not match format + cause + repair proposal
 """
 
 import ast
@@ -48,11 +34,11 @@ import json
 
 def check_static(code: str) -> dict:
     """
-    静态检查: 验证 KernelBench 四大组件是否存在
+    Static inspection: Verify whether Kernel Bench has four major components.
 
-    自动检测 framework:
-    - 包含 "mindspore" → MindSpore 模式 (nn.Cell + construct)
-    - 否则 → PyTorch 模式 (nn.Module + forward)
+    Autodetect work:
+    - Contains \"mindspore\" → MindSpore mode (nn. Cell +construct)
+    - Otherwise → PyTorch mode (nn. Module+forward)
 
     Returns:
         {"passed": bool, "found": [...], "missing": [...], "error": str|None, "framework": str}
@@ -102,7 +88,7 @@ def check_static(code: str) -> dict:
 
 def check_runtime(code: str, timeout: int = 30) -> dict:
     """
-    运行时检查: exec → Model() → forward() → NaN/Inf
+    runtime Inspection: exec → Model() → Forward() → NN/Inf
 
     Returns:
         {"passed": bool, "checks": [...], "error": str|None}
@@ -235,12 +221,12 @@ def check_runtime(code: str, timeout: int = 30) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="验证代码是否符合 KernelBench 任务格式"
+        description="Authentication code match KernelBench task format"
     )
-    parser.add_argument("file", nargs="?", help="要验证的 Python 文件路径")
-    parser.add_argument("--stdin", action="store_true", help="从标准输入读取代码")
-    parser.add_argument("--static-only", action="store_true", help="只做静态检查")
-    parser.add_argument("--json", action="store_true", help="JSON 格式输出")
+    parser.add_argument("file", nargs="?", help="Path to Python file to verify")
+    parser.add_argument("--stdin", action="store_true", help="Read replacement code from standard input")
+    parser.add_argument("--static-only", action="store_true", help="Just do static checks.")
+    parser.add_argument("--json", action="store_true", help="JSON Format Output")
 
     args = parser.parse_args()
 
@@ -255,7 +241,7 @@ def main():
             if args.json:
                 print(json.dumps({"valid": False, "error": f"File not found: {args.file}"}))
             else:
-                print(f"[ERROR] 文件不存在: {args.file}")
+                print(f"[ERROR] File does not exist: {args.file}")
             sys.exit(1)
     else:
         parser.print_help()
@@ -271,14 +257,14 @@ def main():
     }
 
     if not static_result["passed"]:
-        result["error"] = static_result.get("error") or f"缺少组件: {', '.join(static_result['missing'])}"
-        result["suggestion"] = "调用 call_task_constructor 重新构建"
+        result["error"] = static_result.get("error") or f"Missing component: {', '.join(static_result['missing'])}"
+        result["suggestion"] = "Call_task_constructor Rebuild"
         if args.json:
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:
-            print(f"[INVALID] 代码不符合 KernelBench 格式")
-            print(f"缺少: {', '.join(static_result['missing'])}")
-            print(f"建议: {result['suggestion']}")
+            print(f"[INVALID] Code does not match KernelBench Format")
+            print(f"Missing: {', '.join(static_result['missing'])}")
+            print(f"Recommendations: {result['suggestion']}")
         sys.exit(1)
 
     # Runtime check
@@ -288,12 +274,12 @@ def main():
 
         if not runtime_result["passed"]:
             result["error"] = runtime_result["error"]
-            result["suggestion"] = "检查代码逻辑，修复后重新验证"
+            result["suggestion"] = "Check code logic and revalidate after repair"
             if args.json:
                 print(json.dumps(result, ensure_ascii=False, indent=2))
             else:
-                print(f"[INVALID] 运行时检查失败")
-                print(f"错误: {runtime_result['error']}")
+                print(f"[INVALID] runtimeCheck failed")
+                print(f"Error: {runtime_result['error']}")
                 for check in runtime_result["checks"]:
                     status = "PASS" if check["passed"] else "FAIL"
                     print(f"  [{status}] {check['name']}")
@@ -301,13 +287,13 @@ def main():
 
     # All passed
     result["valid"] = True
-    check_type = "静态" if args.static_only else "静态+运行时"
+    check_type = "Static" if args.static_only else "Static +runtime"
 
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
-        print(f"[VALID] 代码符合 KernelBench 格式（{check_type}检查通过）")
-        print(f"包含组件: {', '.join(static_result['found'])}")
+        print(f"[VALID] Code Matches KernelBench Format{check_type}Checked through)")
+        print(f"Include component: {', '.join(static_result['found'])}")
     sys.exit(0)
 
 

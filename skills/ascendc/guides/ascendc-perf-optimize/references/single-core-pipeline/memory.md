@@ -1,60 +1,60 @@
-# 访存 Bound 优化策略
+# Access Bund Optimizing Policy
 
-## 判定条件
+## Conditions for determination
 
-- MTE2 利用率高（AIC 带宽接近理论峰值）
-- Vector/Cube 单元存在等待数据的空闲气泡
-- 计算密度低（Ops/Byte 低于硬件能力）
+- MTE2 High utilization rate (AIC bandwidth approaching theoretical peak)
+- The Victor/Cube unit has an empty bubble waiting for data
+- Calculating low density (ops/ Byte below hardware capacity)
 
-## 仿真图分析要点
+## Elements of a simulation map analysis
 
-- 查看 MTE2 搬移时间线与计算时间线的重叠度
-- 识别大数据量搬移窗口，标记可合并或优化的小搬移序列
+- View the overlap between MTE2 moving time lines and calculating time lines
+- Identification of large data volume migration windows to mark small migration sequences that can be merged or optimized
 
 ---
 
-## 策略 1：带宽未打满 → L2 复用
+## Policy 1: bandwidth is not filled with → L2 reuse
 
-| 操作 | 说明 |
+| Operation | Annotations |
 |------|------|
-| 检查当前带宽利用率 | 对比 `实际带宽 / 理论峰值带宽` |
-| L2 cache 驻留优化 | 调整 tile 大小使数据能驻留 L2，减少重复读 DDR |
-| 多核 L2 共享 | 相邻核处理相邻数据，共享 L2 缓存行 |
+| Check the current bandwidth utilization factor | Compare `actual bandwidth / theoretical peak bandwidth ' |
+| L2 Cache Presence Optimization | Resize the file to keep the data in L2, less double read DDR |
+| Multinucle L2 Sharing | Neighbourhood nuclear processing of adjacent data, sharing of L2 cache lines |
 
-## 策略 2：指令效率 / 选基本块
+## Policy 2: Command Efficiency / Select Basic Blocks
 
-| 操作 | 说明 |
+| Operation | Annotations |
 |------|------|
-| 分析 MTE2 指令发射效率 | 检查是否有冗余搬移指令 |
-| 选取基本块 | 优先使用连续地址 + 大粒度搬移指令 |
-| 减少 stride 搬移 | stride 搬移效率低于连续搬移，重构数据布局 |
+| Analysis of MTE2 command launch efficiency | Check for redundant removal instructions. |
+| Select Basic Blocks | Prefer to a continuous address + a large particle transfer command |
+| Reduce stride move | stride move efficiency is lower than continuous move and reset data |
 
-## 策略 3：减少小块搬运 / 合并载入
+## Policy 3: Reduce small loads / Merge
 
-| 操作 | 说明 |
+| Operation | Annotations |
 |------|------|
-| 识别小块搬运 | profiling 中识别小于 threshold 的搬移操作 |
-| 合并连续小块 | 将多个相邻小搬移合并为单次大搬移 |
-| DataCopyPad 参数优化 | 调整对齐参数避免碎片化搬移 |
-| 消除不必要搬移 | 检查 UB 内数据是否可以原地消费，减少搬入搬出 |
+| Identification of small loads | recognition of less than threshold moves in projecting |
+| Merge continuous blocks | Merge multiple adjacent small moves into a single large move |
+| DataCopyPad Parameter Optimization | Adjusting alignment parameters to avoid debrisation and removal |
+| Unnecessary removal | Check for in situ consumption of UB data to reduce in- and out-migration |
 
-### 连续块优先
+### Continuous block priority
 
-gather、scatter、resize、broadcast 类算子经常因为每元素标量读写变成访存 bound。只要索引在某个局部窗口内形成连续段，就优先改成连续块搬运：
+operator for each element scalar often becomes a memory base. As long as the index forms a continuous segment within a local window, priority is given to consecutive block moving:
 
 ```cpp
-// 差：每个元素触发一次 GM 标量访问。
+// Discrepancies: Each element triggers a GM scalar visit.
 for (int32_t i = 0; i < len; ++i) {
   float v = xGm.GetValue(srcBase + i);
   yGm.SetValue(dstBase + i, v);
 }
 
-// 好：连续段搬到 UB，再一次写回。
+// All right: Move over to UB, write back again.
 DataCopy(tileLocal, xGm[srcBase], len);
 DataCopy(yGm[dstBase], tileLocal, len);
 ```
 
-若只有 tail 非对齐，主路径仍应使用普通 `DataCopy`，tail 单独用 `DataCopyPad`：
+If only tail is unmatched, the main path should still use normal `DataCopy`, tail with a single `DataCopyPad`:
 
 ```cpp
 int32_t aligned = len / elemsPer32B * elemsPer32B;
@@ -66,13 +66,13 @@ if (aligned < len) {
 }
 ```
 
-### UB 内复用
+### UB Inline Reuse
 
-当同一输入或系数会被多个阶段消费时，优先留在 UB 中，不要写回 GM 再读入：
+When the same input or coefficient is consumed at multiple stages, priority is given to remaining in the UB, so do not write back to GM and read:
 
 ```cpp
 DataCopy(xLocal, xGm[rowBase], D);
-DataCopy(xCache, xLocal, D);        // pass 2 复用
+DataCopy(xCache, xLocal, D);        // pass 2 Reuse
 ReduceSum(sumLocal, Square(xLocal), tmp, D);
 
 float inv = Rsqrt(sumLocal.GetValue(0) / D + eps);
@@ -81,11 +81,11 @@ Mul(outLocal, xLocal, gammaLocal, D);
 DataCopy(yGm[rowBase], outLocal, D);
 ```
 
-这类复用最适合 normalization、rotary、softmax、multi-pass reduction；如果 D 超过 UB，改成分 tile cache 或只缓存小系数。
+This type of reuse is most suitable for normalization, rotary, softmax, multi-pass correction; if D exceeds UB, change the ingredient file size or only cache a small coefficient.
 
-## Tiling 修正建议
+## Tiling Amendments
 
-- 调整 UB tile 大小以提升 L2 命中率
-- 优化数据搬移粒度与对齐参数
-- 调整多核切分以减少单核数据量
-- 对多输出或小结果场景，先在 UB 累积多行/多块结果，再一次 CopyOut，避免每行一次小写回。
+- Resize UB file to increase L2 hit rate
+- Optimizing data transfer particle size and alignment parameters
+- Adjusting polynuclear cut-off to reduce mononuclear data
+- For multiple output or small result scenarios, cumulative multi-line/multi-part results in UB, and once again Copyout, avoiding a lower-case return for each line.

@@ -1,27 +1,27 @@
-# mssanitizer 内存检测使用指南
+# Guidelines for the use of mssanitizer memory testing
 
-用于检测 AscendC 算子内核中的内存错误（越界读写、非对齐访问、多核踩踏等），基于 `mssanitizer --tool=memcheck`。
+The memory error (cross-border reading and writing, non-matching, multi-nuclei, etc.) used to detect memory errors in AscendC operator kernel is based on `mssanitizer --tool=memcheck`.
 
-**这是 `ascendc-crash-debug` skill 的子功能模块，请通过 `/ascendc-crash-debug` 触发使用。**
+**This is `ascendc-crash-debug` Skill 's subfunctional module, which is triggered by `/ascendc-crash-debug`.**
 
-## 前置条件
+## Preconditions
 
-- NPU 设备可用（`npu-smi info` 正常）
-- CANN 环境已安装并可用（含 `mssanitizer` 工具）
-- 算子代码仓库中包含 `build.sh` 编译脚本
-- 已有可运行的 ST 测试用例（pytest）
+- NPU device available (`npu-smi info` normal)
+- CANN environment installed and available (including `mssanitizer` tool)
+- operator code repository containing `build.sh` compilation scripts
+- There is a runable ST test case (pytest)
 
-## 快速开始
+## Fast start.
 
-### 第 1 步：准备配置文件
+### Step 1: Prepare configuration file
 
-将模板拷贝到你的工作目录，并根据实际情况修改：
+Copy the template to your work directory and adapt it to the actual situation:
 
 ```bash
 cp scripts/memcheck_input.json.template ./memcheck_input.json
 ```
 
-编辑 `memcheck_input.json`，填写你的算子信息：
+Edit `memcheck_input.json` to fill in your operator message:
 
 ```json
 {
@@ -42,21 +42,21 @@ cp scripts/memcheck_input.json.template ./memcheck_input.json
 }
 ```
 
-各字段说明：
+The fields state:
 
-| 字段 | 必填 | 说明 |
+| Fields | shall fill | Annotations |
 |------|------|------|
-| `operator.name` | 是 | 算子名称 |
-| `paths.code_base_dir` | 是 | 代码仓根目录（包含 `build.sh`） |
-| `testing.test_script_dir` | 是 | ST 测试脚本所在目录（绝对路径） |
-| `testing.test_script_exe` | 是 | 测试执行命令，如 `pytest test_npu_xxx.py` |
-| `environment.device_type` | 是 | NPU 设备类型，如 `ascend910b` |
-| `environment.cann_env` | 是 | CANN 环境路径 |
-| `compilation.sanitizer_options` | 否 | 编译选项，默认 `"-sanitizer;-g"` |
-| `memcheck.timeout` | 否 | 超时秒数，默认 `600` |
-| `options.rebuild` | 否 | 是否重新编译，默认 `true` |
+| `operator.name` | Yes. | Name of operator |
+| `paths.code_base_dir` | Yes. | Code silo directory (includes `build.sh`) |
+| `testing.test_script_dir` | Yes. | ST Test script directory (absolute path) |
+| `testing.test_script_exe` | Yes. | Test execution commands such as `pytest test_npu_xxx.py` |
+| `environment.device_type` | Yes. | NPU device type, e.g. `ascend910b` |
+| `environment.cann_env` | Yes. | CANN Environment Path |
+| `compilation.sanitizer_options` | Yes | Compiler Options, Default `"-sanitizer;-g"` |
+| `memcheck.timeout` | Yes | Timeout seconds, default `600` |
+| `options.rebuild` | Yes | Whether to recompile, default `true` |
 
-### 第 2 步：拷贝脚本并执行
+### Step 2: Copying scripts and implementing them
 
 ```bash
 cp scripts/run_memcheck_pre.sh .
@@ -64,74 +64,74 @@ chmod +x run_memcheck_pre.sh
 ./run_memcheck_pre.sh
 ```
 
-脚本会自动完成：编译（带 sanitizer）→ 安装算子包 → 运行 mssanitizer memcheck。
+Script will be automatically completed: compile (with Sanitizer) → install operator package → run mssanitizer memcheck.
 
-### 第 3 步：查看结果
+### Step 3: View results
 
-输出保存在 `<code_base_dir>/memcheck_output/` 下：
+Output saved under `<code_base_dir>/memcheck_output/`:
 
 ```
 memcheck_output/
-├── status.txt                          # 执行状态摘要
-├── build/build.log                     # 编译日志
-├── install/install.log                 # 安装日志
+├── status.txt                          # Summary of status of implementation
+├── build/build.log                     # Compile Log
+├── install/install.log                 # Install Log
 └── memcheck/
-    ├── ascendc_memcheck_report_raw.txt # memcheck 原始报告（重点看这个）
-    └── mindstudio_sanitizer_log/       # mssanitizer 详细日志
+    ├── ascendc_memcheck_report_raw.txt # memcheck Original report (focus on this)
+    └── mindstudio_sanitizer_log/       # mssanitizer Detailed Log
 ```
 
-### 第 4 步：让 Claude 分析
+### Step 4: Let Claude Analyse
 
-在 Claude Code 中输入 `/ascendc-crash-debug` 并说明需要内存检测，Claude 会自动：
-1. 读取 memcheck 报告，提取 ERROR 和 WARNING
-2. 根据调用栈定位源代码
-3. 分析根因并给出修复建议
-4. 生成 `memcheck_detailed_report.md` 详细报告
+Enter `/ascendc-crash-debug` in Claude Code and specify the need for memory testing, and Claude will automatically:
+1. Read memcheck report, extract ERRO and WARNING
+2. Based on call stack, locate source code
+3. Analysis of root causes and recommendations for rehabilitation
+4. Generate `memcheck_detailed_report.md` detailed report
 
-## 常用选项
+## Common Options
 
 ```bash
-# 跳过编译，直接用已有产物运行 memcheck
+# Skip compile, run memcheck directly with the existing product
 ./run_memcheck_pre.sh --skip-build
 
-# 指定其他配置文件
+# Specify other configuration file
 ./run_memcheck_pre.sh --config my_config.json
 
-# 详细输出
+# Detailed Output
 ./run_memcheck_pre.sh --verbose
 ```
 
-## 典型使用场景
+## Typical use of scene
 
-- 算子运行崩溃、偶发崩溃无法复现
-- 怀疑存在越界读写或内存踩踏导致崩溃
-- aic error 或 coredump 堆栈不清晰
-- 多核场景下偶发崩溃
-- 代码提交前的内存安全检查
+- operator running crashes, occasional crashes cannot recur.
+- Suspected of cross-border reading and writing or memory trampling leading to collapse
+- Aic error or coredump stack is not clear
+- The multi-nuclear scenario is going to collapse.
+- Memory security check before code submission
 
 
-## 目录结构
+## Contents structure
 
 ```
 ascendc-crash-debug/
 ├── scripts/
-│   ├── memcheck_input.json.template     # 配置文件模板（拷贝到工作目录使用）
-│   └── run_memcheck_pre.sh              # 自动化检测脚本
-│   └── parse_plog.py                    # plog 日志解析脚本
+│   ├── memcheck_input.json.template     # configuration fileTemplate (copy to work directory)
+│   └── run_memcheck_pre.sh              # Automatically detect scripts
+│   └── parse_plog.py                    # plog Log Resolution Script
 └── references/
     └── memcheck/
-        ├── automated_workflow.md        # 自动化工作流详细说明
-        ├── README.md                    # 本文件 - 用户使用指南
-        └── mssanitizer_guide.md         # msSanitizer 工具原始文档
+        ├── automated_workflow.md        # Details of automated workflows
+        ├── README.md                    # This document - User Use Guide
+        └── mssanitizer_guide.md         # msSanitizer Tool Original Document
 ```
 
-## 常见问题
+## common issue
 
-**Q: 脚本报找不到 `mssanitizer`？**
-确认 CANN 环境已正确加载：`source <cann_env>/bin/setenv.bash`
+**Q: Can't find `mssanitizer`**in the script?
+Confirm CANN environment correctly loaded: `source <cann_env>/bin/setenv.bash`
 
-**Q: 编译失败？**
-检查 `memcheck_output/build/build.log`，确认 `code_base_dir` 路径正确且包含 `build.sh`。
+**Q: Failed to compile**
+Check `memcheck_output/build/build.log` to confirm that the `code_base_dir` path is correct and contains `build.sh`.
 
-**Q: memcheck 超时？**
-在配置文件中增大 `memcheck.timeout`（单位秒），大型算子建议设为 1200+。
+**: memcheck timeout**
+Add `memcheck.timeout` (in seconds) to configuration file, and large operator suggests 1,200+.

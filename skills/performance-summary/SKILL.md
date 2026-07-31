@@ -1,87 +1,87 @@
 ---
 name: performance-summary
-description: 用于汇总和对比多个算子的性能测试结果。当用户请求汇总多个算子的性能结果、对比算子 benchmark、生成性能报告、分析多个 kernel 的加速比时使用此 Skill。
+description: To summarize and compare the results of multiple operator performance tests. Use this Skill when the user requests that multiple operator performance results be aggregated, compared operator benchmark, generated performance reports, and analysed multiple kernel acceleration ratios.
 ---
 
-# 性能汇总
+# Summary of performance
 
-汇总和对比多个算子的性能指标。
+Summarize and compare multiple performance indicators for operator.
 
-## 工作流程
+## Workflow
 
-1. **收集性能数据**
-   - 使用 `read_file` 读取各算子的 `verify_<op_name>/result.json`
-   - 提取关键指标：latency_ms, throughput, memory_usage_mb, speedup
+1. **Collecting performance data**
+   - Read `verify_<op_name>/result.json` of each operator using `read_file`
+   - Extract key indicators: latency_ms, throughput, memory_usage_mb, printup
 
-2. **生成对比表格**
+2. **Generate comparative tables**
    ```
-   | 算子   | 延迟 (ms) | 吞吐量 | 内存 (MB) | 加速比 |
+   | operator   | latency (ms) | throughput | Memory (MB) | Accelerated ratio |
    |--------|-----------|--------|-----------|--------|
    | relu   | 0.15      | 1000   | 128       | 2.3x   |
    ```
 
-3. **分析结果**
-   - 找出最优/最差的算子
-   - 标注性能异常点
-   - 提出优化目标
+3. **Analysis**
+   - Find Best / Worst operator
+   - Mark performance anomalies
+   - Optimization of objectives
 
-4. **生成报告**
-   使用模板：`## 测试环境` → `## 性能对比` → `## 分析` → `## 优化建议`
+4. **Generating report**
+   Use template: ## test environment # → ## performance comparison # → ### analysis # → # optimization recommendation #
 
-## 数据位置
+## Data Location
 
-性能结果存储在验证目录中：
-- `verify_<op_name>/result.json` - 主要结果
-- `verify_<op_name>/profiling.json` - 详细性能分析（如有）
+Performance results are stored in the authentication directory:
+- `verify_<op_name>/result.json` - Main Results
+- `verify_<op_name>/profiling.json` - Detailed profiling (if any)
 
-## 关键指标
+## Key indicators
 
-| 指标 | 说明 |
+| Indicators | Annotations |
 |------|------|
-| latency_ms | 单次执行延迟（毫秒） |
-| throughput | 每秒操作数 |
-| speedup | 相对基准（torch）的加速比 |
-| memory_usage_mb | 峰值内存占用（MB） |
+| latency_ms | Single execution of latency (ms) |
+| throughput | Operation per second |
+| speedup | Accelerated ratio of relative baseline (torch) |
+| memory_usage_mb | Peak Memory Occupancy (MB) |
 
-## 示例
+## Example:
 
-**用户**: "帮我汇总 relu 和 sigmoid 算子的性能"
+**User**: "Consolidate the performance of relu and sigmoid operator for me."
 
-**Agent 执行**:
-1. 调用 `read_file("verify_relu/result.json")`
-2. 调用 `read_file("verify_sigmoid/result.json")`
-3. 提取指标，构建对比表格
-4. 生成汇总和优化建议
+**Agent Implementation**:
+1. Call `read_file("verify_relu/result.json")`
+2. Call `read_file("verify_sigmoid/result.json")`
+3. Extract indicators, construct comparative tables
+4. Generate summary and optimization recommendation
 
-## 脚本调用
+## Script Call
 
-可使用 `scripts/collect_metrics.py` 批量收集并打印性能汇总：
+The `scripts/collect_metrics.py` batch can be used to collect and print a summary of performance:
 
 ```python
 from collect_metrics import collect_metrics, print_results
 
-# 打印格式化的性能汇总结果
+# Print formatted performance summary results
 print_results()
 ```
 
-## Skill 验证
+## Skill Authentication
 
-使用 `--verify` 参数验证当前 skill 是否可用：
+Use `--verify` parameters to verify whether the current skill is available:
 
 ```bash
 python scripts/collect_metrics.py --verify
 ```
 
-验证内容包括：
-- SKILL.md 文件是否存在且格式正确
-- 核心函数是否可调用
-- 依赖模块是否可用
-- 模拟执行测试
+Validation includes:
+- SKILL.md files exist and are formatted correctly
+- Core Functions Callable
+- Reliance on the availability of modules
+- Simulation Executive Tests
 
-**输出示例**:
+**Examples of output**:
 ```
 ============================================================
-性能汇总结果
+Summary of performance results
 ============================================================
 | Operator | Latency (ms) | Throughput | Memory (MB) | Speedup | Correct |
 |----------|--------------|------------|-------------|---------|---------|

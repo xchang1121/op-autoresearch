@@ -1,6 +1,6 @@
 ---
 name: cuda-c-api
-description: "CUDA C 编程接口完整参考手册"
+description: "CUDA C programming interface complete reference manual"
 category: fundamental
 version: "1.0.0"
 metadata:
@@ -8,159 +8,159 @@ metadata:
   dsl: cuda_c
 ---
 
-# CUDA C API 参考手册
+# CUDA C API Reference Manual
 
-本文档提供 CUDA C 核心编程接口的详细参考，包括函数签名、参数说明和使用示例。
+This document provides detailed references to the CUDA C core programming interface, including functional signatures, parameter descriptions and examples of use.
 
-## 1. 函数修饰符
+## 1. Function Modifiers
 
 ### __global__
 ```cuda
-__global__ void kernel_function(参数列表);
+__global__ void kernel_function(List of parameters);
 ```
-- **功能**: 标记为可在 GPU 上执行的内核函数
-- **调用**: 只能从主机代码调用，使用 `<<<>>>` 语法启动
-- **返回值**: 必须为 `void`
+- **Function**: Mark as kernel to execute on GPU
+- **Call**: Only from host code, started using `<<<>>>` syntax
+- **return value**: must be `void`
 
 ### __device__
 ```cuda
-__device__ float device_function(参数列表);
+__device__ float device_function(List of parameters);
 ```
-- **功能**: 标记为在 GPU 上执行的设备函数
-- **调用**: 只能从其他 `__device__` 或 `__global__` 函数调用
-- **用途**: 内核内部的辅助函数
+- **Function**: Mark to device function performed on GPU
+- **Call**: Only from other `__device__` or `__global__` functions
+- **Use**: Auxiliary functions within the kernel
 
 ### __host__
 ```cuda
-__host__ void host_function(参数列表);
+__host__ void host_function(List of parameters);
 ```
-- **功能**: 标记为在 CPU 上执行的函数（默认）
-- **调用**: 只能从主机代码调用
+- **Function**: Mark as a function executed on CPU (default)
+- **Call**: Only from host code
 
 ### __host__ __device__
 ```cuda
 __host__ __device__ float utility_function(float x);
 ```
-- **功能**: 同时在 CPU 和 GPU 上可用
-- **用途**: 通用工具函数
+- **Function**: also available on CPU and GPU
+- **Practice**: Common tool function
 
-## 2. 内存类型修饰符
+## 2. Memory Type Modifier
 
 ### __shared__
 ```cuda
 __shared__ float shared_memory[256];
 ```
-- **功能**: 声明线程块内共享的内存
-- **生命周期**: 与线程块相同
-- **访问**: 块内所有线程可读写
-- **容量**: 通常 48-164 KB/SM
+- **Function**: Declaration of memory shared within line blocks
+- **Life cycle**: Same as the thread block
+- **Arrival**: All threads within a block readable
+- **Capacity**: normal 48-164 KB/SM
 
 ### __constant__
 ```cuda
 __constant__ float constant_data[64];
 ```
-- **功能**: 声明只读的常量内存
-- **特点**: 缓存优化，适合广播读取
-- **设置**: 通过 `cudaMemcpyToSymbol` 从主机端设置
+- **Function**: Declaration of read-only constant memory
+- **Feature**: Cache Optimization for Broadcast Reader
+- **Settings**: through `cudaMemcpyToSymbol` from host side Settings
 
 ### extern __shared__
 ```cuda
 extern __shared__ float dynamic_shared[];
 ```
-- **功能**: 动态分配的共享内存
-- **大小**: 在内核启动时通过第三个参数指定
-- **启动**: `kernel<<<grid, block, shared_mem_bytes>>>(args)`
+- **Function**: dynamically allocated shared memory
+- **Size**: specify by third parameter on inner core startup
+- **Start**: `kernel<<<grid, block, shared_mem_bytes>>>(args)`
 
-## 3. 内核启动语法
+## 3. kernel startup syntax
 
-### 基本语法
+### Basic Syntax:
 ```cuda
-kernel_name<<<grid_size, block_size>>>(参数列表);
-kernel_name<<<grid_size, block_size, shared_mem_bytes>>>(参数列表);
-kernel_name<<<grid_size, block_size, shared_mem_bytes, stream>>>(参数列表);
+kernel_name<<<grid_size, block_size>>>(List of parameters);
+kernel_name<<<grid_size, block_size, shared_mem_bytes>>>(List of parameters);
+kernel_name<<<grid_size, block_size, shared_mem_bytes, stream>>>(List of parameters);
 ```
-- **grid_size**: 网格大小（`int` 或 `dim3`）
-- **block_size**: 线程块大小（`int` 或 `dim3`）
-- **shared_mem_bytes**: 动态共享内存大小（可选，默认 0）
-- **stream**: CUDA 流（可选，默认 0）
+- **grid_size**: grid size (`int` or `dim3`)
+- **block_size**: Thread block size (`int` or `dim3`)
+- **shared_mem_bytes**: Dynamic shared memory Size (optional, default 0)
+- **stream**: CUDA streams (optional, default 0)
 
-### dim3 类型
+### dim3 type
 ```cuda
 dim3 grid_size(blocks_x, blocks_y, blocks_z);
 dim3 block_size(threads_x, threads_y, threads_z);
 ```
-- **用途**: 多维网格和线程块配置
-- **默认**: 未指定的维度默认为 1
+- **Pilot**: multi-dimensional grid and line block configuration
+- **Default**: Unspecified dimensions default to 1
 
-## 4. 线程和块索引系统
+## 4. Thread and block indexing system
 
-### 块索引变量
+### Block Index Variables
 ```cuda
-int bx = blockIdx.x;   // X 方向块索引
-int by = blockIdx.y;   // Y 方向块索引
-int bz = blockIdx.z;   // Z 方向块索引
+int bx = blockIdx.x;   // X Direction block index
+int by = blockIdx.y;   // Y Direction block index
+int bz = blockIdx.z;   // Z Direction block index
 ```
-- **类型**: `uint3`
-- **用途**: 确定当前线程块在网格中的位置
+- **Type**: `uint3`
+- **Turn**: determine the position of the current thread in the grid
 
-### 线程索引变量
+### Thread Index Variables
 ```cuda
-int tx = threadIdx.x;  // X 方向线程索引
-int ty = threadIdx.y;  // Y 方向线程索引
-int tz = threadIdx.z;  // Z 方向线程索引
+int tx = threadIdx.x;  // X Directional Line Index
+int ty = threadIdx.y;  // Y Directional Line Index
+int tz = threadIdx.z;  // Z Directional Line Index
 ```
-- **类型**: `uint3`
-- **用途**: 确定当前线程在线程块中的位置
+- **Type**: `uint3`
+- **Pilot**: Determines the position of the current thread online block
 
-### 块维度信息
+### Block dimension information
 ```cuda
-int bdx = blockDim.x;  // X 方向线程数
-int bdy = blockDim.y;  // Y 方向线程数
-int bdz = blockDim.z;  // Z 方向线程数
+int bdx = blockDim.x;  // X Number of directional steps
+int bdy = blockDim.y;  // Y Number of directional steps
+int bdz = blockDim.z;  // Z Number of directional steps
 ```
-- **类型**: `dim3`
-- **用途**: 获取线程块的维度信息
+- **Type**: `dim3`
+- **Use**: Get the dimensions of a thread block
 
-### 网格维度信息
+### Grid dimension information
 ```cuda
-int gdx = gridDim.x;   // X 方向块数
-int gdy = gridDim.y;    // Y 方向块数
-int gdz = gridDim.z;   // Z 方向块数
+int gdx = gridDim.x;   // X Number of heading blocks
+int gdy = gridDim.y;    // Y Number of heading blocks
+int gdz = gridDim.z;   // Z Number of heading blocks
 ```
-- **类型**: `dim3`
-- **用途**: 获取网格的维度信息
+- **Type**: `dim3`
+- **Use**: Get the dimensions of the grid
 
-## 5. 内存管理 API
+## 5. Memory Management API
 
 ### cudaMalloc(devPtr, size)
 ```cuda
 float* d_data;
 cudaMalloc(&d_data, n * sizeof(float));
 ```
-- **参数**: 设备指针的地址, 分配字节数
-- **返回**: `cudaError_t` 错误状态码
-- **功能**: 在 GPU 上分配全局内存
+- **Parameter**: address of device pointer, distribution bytes
+- **Return**: `cudaError_t` error status code
+- **Function**: Allocation of global memory on GPU
 
 ### cudaFree(devPtr)
 ```cuda
 cudaFree(d_data);
 ```
-- **参数**: 设备内存指针
-- **返回**: `cudaError_t` 错误状态码
-- **功能**: 释放 GPU 全局内存
+- **Parameter**: device memory pointer
+- **Return**: `cudaError_t` error status code
+- **Function**: Release GPU global memory
 
 ### cudaMemcpy(dst, src, count, kind)
 ```cuda
-// 主机 → 设备
+// host → device.
 cudaMemcpy(d_data, h_data, size, cudaMemcpyHostToDevice);
-// 设备 → 主机
+// device→host
 cudaMemcpy(h_data, d_data, size, cudaMemcpyDeviceToHost);
-// 设备 → 设备
+// device → device.
 cudaMemcpy(d_dst, d_src, size, cudaMemcpyDeviceToDevice);
 ```
-- **参数**: 目标指针, 源指针, 字节数, 传输方向
-- **返回**: `cudaError_t` 错误状态码
-- **传输方向**:
+- **Parameter**: Target Pointer, Source Pointer, Bytes, Transfer Direction
+- **Return**: `cudaError_t` error status code
+- **Transfer direction**:
   - `cudaMemcpyHostToDevice`: H2D
   - `cudaMemcpyDeviceToHost`: D2H
   - `cudaMemcpyDeviceToDevice`: D2D
@@ -169,119 +169,119 @@ cudaMemcpy(d_dst, d_src, size, cudaMemcpyDeviceToDevice);
 ```cuda
 cudaMemset(d_data, 0, n * sizeof(float));
 ```
-- **参数**: 设备指针, 填充值（按字节）, 字节数
-- **功能**: 将设备内存设为指定值
+- **Parameter**: device pointer, fill value (bytes), bytes
+- **Function**: Set device memory to a specified value
 
-## 6. 线程同步机制
+## 6. Thread Synchronization Mechanism
 
 ### __syncthreads()
 ```cuda
 __syncthreads();
 ```
-- **功能**: 等待块内所有线程到达同步点
-- **用途**: 确保共享内存数据一致性
-- **⚠️ 注意**: 块内所有线程都必须执行到此同步点，否则导致死锁
+- **Function**: Waiting for all threads in the block to reach sync point
+- **Use**: Ensure consistency of shared memory data
+- **⚠ ️ Note: All threads within the block must be executed to this synchronous point, otherwise it will result in a dead lock
 
 ### __threadfence()
 ```cuda
 __threadfence();
 ```
-- **功能**: 确保当前线程的内存写入对所有线程全局可见
-- **用途**: 跨线程块的数据可见性保证
+- **Function**: ensure that the memory of the current thread is written in a global view of all threads
+- **Pilot**: Data Visibility Assurance for Cross-line Blocks
 
 ### __threadfence_block()
 ```cuda
 __threadfence_block();
 ```
-- **功能**: 确保当前线程的内存写入对同块线程可见
-- **用途**: 块内的内存可见性保证
+- **Function**: ensure that the memory of the current thread is written to be visible to the same thread
+- **Use**: Memory Visibility Assurance in Blocks
 
-## 7. 原子操作 API
+## 7. Atomic Operation API
 
 ### atomicAdd(address, val)
 ```cuda
 atomicAdd(&output[0], local_sum);
 ```
-- **功能**: 线程安全的加法操作
-- **支持类型**: `int`, `unsigned int`, `float`, `double`（Compute Capability 6.0+）
+- **Function**: Thread Safety Plus Operation
+- **Support type**: `int`, `unsigned int`, `float`, `double` (Compute Capitality 6.0+)
 
 ### atomicMax / atomicMin
 ```cuda
 atomicMax(&max_val, local_max);
 atomicMin(&min_val, local_min);
 ```
-- **功能**: 线程安全的最大值/最小值更新
-- **支持类型**: `int`, `unsigned int`
+- **Function**: Maximum/Minimum Thread Security Update
+- **Support type**: `int`, `unsigned int`
 
 ### atomicCAS(address, compare, val)
 ```cuda
 int old = atomicCAS(&target, expected, desired);
 ```
-- **功能**: 比较并交换（Compare-And-Swap）
-- **返回**: 原始值
+- **Function**: Comparison-And-Swap
+- **Return**: Original
 
 ### atomicExch(address, val)
 ```cuda
 float old = atomicExch(&target, new_value);
 ```
-- **功能**: 原子交换操作
-- **返回**: 原始值
+- **Function**: Atomic Exchange Operations
+- **Return**: Original
 
-## 8. 数学运算函数
+## 8. Mathematical Operations Functions
 
-### 标准数学函数
+### Standard Mathematical Functions
 ```cuda
-float max_val = fmaxf(a, b);      // 最大值
-float min_val = fminf(a, b);      // 最小值
-float abs_val = fabsf(x);         // 绝对值
-float sqrt_val = sqrtf(x);        // 平方根
-float rsqrt_val = rsqrtf(x);     // 平方根倒数
-float exp_val = expf(x);          // 指数
-float log_val = logf(x);          // 自然对数
-float pow_val = powf(base, exp);  // 幂运算
-float ceil_val = ceilf(x);        // 向上取整
-float floor_val = floorf(x);      // 向下取整
+float max_val = fmaxf(a, b);      // Maximum value
+float min_val = fminf(a, b);      // Min
+float abs_val = fabsf(x);         // Absolute value [u]
+float sqrt_val = sqrtf(x);        // Square root
+float rsqrt_val = rsqrtf(x);     // Square root countdown
+float exp_val = expf(x);          // Index
+float log_val = logf(x);          // Natural log [N]
+float pow_val = powf(base, exp);  // Logic Operations
+float ceil_val = ceilf(x);        // Lift Up
+float floor_val = floorf(x);      // Sweep Down
 ```
 
-### 快速数学函数（精度略低但速度更快）
+### Rapid Math function (accuracy slightly lower but faster)
 ```cuda
-float fast_exp = __expf(x);       // 快速指数
-float fast_log = __logf(x);       // 快速对数
-float fast_sin = __sinf(x);       // 快速正弦
-float fast_cos = __cosf(x);       // 快速余弦
-float fast_pow = __powf(b, e);    // 快速幂运算
+float fast_exp = __expf(x);       // Quick Index
+float fast_log = __logf(x);       // Fast logarithm
+float fast_sin = __sinf(x);       // QuickSine
+float fast_cos = __cosf(x);       // Quick Cosine
+float fast_pow = __powf(b, e);    // Quick Crunch Operations
 ```
 
-### 类型转换
+### Type Conversion
 ```cuda
-float f = __int2float_rn(i);      // int → float（最近舍入）
-int i = __float2int_rn(f);        // float → int（最近舍入）
+float f = __int2float_rn(i);      // int → float(Recent rounded)
+int i = __float2int_rn(f);        // float → int(Recent rounded)
 ```
 
-## 9. Warp 级操作（Compute Capability 3.0+）
+## 9. Warp Level Operations (Compute Capitalisation 3.0+)
 
 ### __shfl_sync / __shfl_down_sync
 ```cuda
-// Warp 内数据交换
+// Data Interchange in Warp
 float val = __shfl_sync(0xFFFFFFFF, src_val, src_lane);
-// Warp 内归约
+// Warp Internal Convention
 float val = __shfl_down_sync(0xFFFFFFFF, src_val, offset);
 ```
-- **功能**: Warp 内线程间直接数据交换
-- **参数**: mask（参与线程掩码）, 源值, 源 lane / 偏移量
+- **Function**: direct data interchange between Warp inner processes
+- **Parameter**: mask (participated thread mask), source value, source light/ offset
 
-## 10. PyTorch 集成 API
+## 10. PyTorch Integration API
 
-### torch::Tensor 操作
+### Torch::Tensor operation
 ```cuda
-// 在 CUDA 源代码中使用 PyTorch 接口
+// Use PyTorch interface in CUDA source code
 torch::Tensor my_op(torch::Tensor input) {
     auto size = input.numel();
     auto output = torch::zeros_like(input);
-    
+
     int block_size = 256;
     int num_blocks = (size + block_size - 1) / block_size;
-    
+
     my_kernel<<<num_blocks, block_size>>>(
         input.data_ptr<float>(),
         output.data_ptr<float>(),
@@ -291,20 +291,20 @@ torch::Tensor my_op(torch::Tensor input) {
 }
 ```
 
-### 常用 torch::Tensor 方法
+### Common torch::Tensor method
 ```cuda
-input.numel()              // 元素总数
-input.size(dim)            // 指定维度大小
-input.data_ptr<float>()    // 获取数据指针
-torch::zeros_like(input)   // 创建同形状零张量
-torch::empty_like(input)   // 创建同形状未初始化张量
+input.numel()              // Total number of elements
+input.size(dim)            // Specify the dimension size
+input.data_ptr<float>()    // Get Data Pointer
+torch::zeros_like(input)   // Create Sameshapeniltensor
+torch::empty_like(input)   // Create SameshapeNot initializedtensor
 ```
 
-## 使用建议
+## Use recommendations
 
-1. **边界检查**: 所有数组访问前必须检查边界
-2. **原子操作**: 仅在必要时使用，有性能开销
-3. **快速数学函数**: 精度要求不高时使用 `__expf` 等加速
-4. **共享内存**: 使用前后必须 `__syncthreads()` 同步
-5. **错误检查**: 每个 CUDA API 调用后检查返回值
-6. **内存对齐**: 确保数据按合适边界对齐（128 字节）
+1. **Boundary check**: all arrays must check the border before visiting
+2. **Atomic operations**: use only when necessary, performance costs
+3. **Rapid Mathematical Functions**: accuracy requires acceleration using `__expf`, etc.
+4. **shared memory**: `__syncthreads()` Synchronize before and after use
+5. **Error check**: Check return value after every CUDA API call
+6. **Memory alignment**: ensure that data are aligned to the appropriate boundary (128 bytes)
