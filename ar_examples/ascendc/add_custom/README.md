@@ -15,7 +15,7 @@ add_custom/
     op_extension/
 ```
 
-Run from `akg_agents/workspace_autoresearch`:
+Run from the repository root:
 
 ```text
 /autoresearch --ref ar_examples/ascendc/add_custom/reference.py --kernel ar_examples/ascendc/add_custom/ascendc_op --op-name add_custom --devices 0

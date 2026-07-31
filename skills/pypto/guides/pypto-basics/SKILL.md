@@ -89,8 +89,8 @@ tile 参数个数 = 被操作 tensor 的 rank。常用：
 
 ```python
 import os, pypto, torch
-_PYPTO_RUN_MODE = int(os.getenv("AIKG_PYPTO_RUN_MODE", "0"))
-_PYPTO_RUNTIME_DEBUG_MODE = int(os.getenv("AIKG_PYPTO_RUNTIME_DEBUG_MODE", "0"))
+_PYPTO_RUN_MODE = int(os.getenv("OP_AUTORESEARCH_PYPTO_RUN_MODE", "0"))
+_PYPTO_RUNTIME_DEBUG_MODE = int(os.getenv("OP_AUTORESEARCH_PYPTO_RUNTIME_DEBUG_MODE", "0"))
 ```
 
 ## 模式 A：Elementwise

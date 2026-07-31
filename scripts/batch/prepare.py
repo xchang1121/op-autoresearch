@@ -1,3 +1,17 @@
+# Copyright 2026 Huawei Technologies Co., Ltd
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """One-shot preparation step: discover ops + verify Tier 1.
 
 Combines two mechanical pre-flight steps that always run together when
@@ -22,13 +36,11 @@ Exits 0 only if both steps pass; on discover failure verify is skipped.
 """
 from __future__ import annotations
 
-import argparse
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import discover
-import manifest as mf
 import verify
 
 
@@ -82,28 +94,14 @@ def _preflight_check_hook_paths() -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(
-        description="Prepare a batch dir: discover ops + verify Tier 1.",
-    )
-    ap.add_argument("batch_dir")
-    ap.add_argument("--ref-dir", default="",
-                    help="ref subdirectory (default: from manifest, else 'refs')")
-    ap.add_argument("--kernel-dir", default="",
-                    help="kernel subdirectory (default: from manifest, else 'kernels')")
-    ap.add_argument("--filter", default="",
-                    help="glob to KEEP only matching op names (e.g. '*norm')")
-    ap.add_argument("--exclude", action="append", default=[],
-                    help="glob(s) to drop matching op names; repeatable")
+    ap = discover.make_parser(
+        "Prepare a batch dir: discover ops + verify Tier 1.")
     ap.add_argument("--only", default="",
                     help="restrict the verify step to comma-separated op names "
                          "(does not affect what gets written to the manifest)")
     ap.add_argument("--skip-verify", action="store_true",
                     help="run discover only; don't invoke Tier 1 verify")
     args = ap.parse_args()
-
-    batch_dir = Path(args.batch_dir).resolve()
-    if not batch_dir.is_dir():
-        sys.exit(f"batch dir not found: {batch_dir}")
 
     # ---- Step 0: preflight (hook paths) ----------------------------------
     # Catch stale `.claude/settings.json` hook references before spending
@@ -112,27 +110,8 @@ def main() -> int:
         return 1
 
     # ---- Step 1: discover -------------------------------------------------
+    batch_dir, ref_dir, kernel_dir, ops = discover.resolve_request(args)
     print(f"[prepare 1/2] discover  batch_dir={batch_dir}")
-
-    existing: dict = {}
-    try:
-        manifest_path = mf.find_manifest(batch_dir)
-        existing = mf.load_manifest(manifest_path)
-    except mf.ManifestError:
-        pass
-
-    ref_dir = args.ref_dir or existing.get("ref_dir") or "refs"
-    kernel_dir = args.kernel_dir or existing.get("kernel_dir") or "kernels"
-
-    ops = discover.discover(
-        batch_dir, ref_dir, kernel_dir,
-        include_glob=args.filter or None,
-        exclude_globs=list(args.exclude),
-    )
-    if not ops:
-        sys.exit("no ops discovered. Expected files matching "
-                 "<op_name>_ref.py / <op_name>_kernel.py in the configured "
-                 "ref_dir / kernel_dir.")
 
     target = discover.write_manifest(batch_dir, ref_dir, kernel_dir, ops)
     print(f"  wrote {len(ops)} ops to {target.name}")
@@ -144,7 +123,7 @@ def main() -> int:
         return 0
 
     # ---- Step 2: verify Tier 1 -------------------------------------------
-    print(f"\n[prepare 2/2] verify Tier 1")
+    print("\n[prepare 2/2] verify Tier 1")
     rc = verify.run_verification(
         batch_dir, full=False, only=args.only,
     )

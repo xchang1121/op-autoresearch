@@ -1,48 +1,47 @@
-"""Single source for paths that live outside this scripts/ package.
+# Copyright 2026 Huawei Technologies Co., Ltd
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-For claude-autoresearch, the framework code and sibling content trees sit
-under the repo root:
+"""Single source for paths that live OUTSIDE this scripts/ package.
 
-    <repo_root>/
-      scripts/         <- this package (engine/, worker/, hooks/, utils/, ...)
-      scripts/eval/    <- evaluation package (KernelVerifier and adapters)
-      skills/          <- per-DSL documentation tree
+The workspace uses the repository-owned skill tree:
 
-Earlier revisions routed verify and benchmark through an out-of-tree
-skills sibling. That CLI contract is gone; the eval entrypoint is the
-in-tree `scripts/eval` package.
+    scripts/         <- this package
+    skills/          <- per-DSL skill markdown
 
-This module is the one place that encodes the layout, so a tree move is a
-one-line fix here instead of every consumer.
+`OP_AUTORESEARCH_AR_SKILLS_ROOT` (set in .claude/settings.json) overrides the
+relative fallback so the resolution works both when the slash command
+runs from this dir and when callers cd elsewhere.
+
+CA's `eval_dir()` (its vendored eval package) has no analogue here: the
+verifier lives at `op_autoresearch.op.verifier` and is reached via
+``utils.eval_bridge``, not via a filesystem path.
 """
 import os
 
-# external_paths.py -> utils/ -> scripts/ -> repo root.
-_REPO_ROOT = os.path.abspath(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
-
-_SCRIPTS_ROOT = os.path.join(_REPO_ROOT, "scripts")
-
-
-def eval_dir() -> str:
-    """Dir holding the in-tree evaluation package (KernelVerifier,
-    profiler, adapters/{backend,dsl,framework})."""
-    return os.path.join(_SCRIPTS_ROOT, "eval")
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_WS_ROOT = os.path.abspath(os.path.join(_HERE, "..", ".."))
+_DEFAULT_SKILLS = os.path.join(_WS_ROOT, "skills")
 
 
 def skills_dir() -> str:
-    """Dir holding the per-DSL skill documentation tree."""
-    return os.path.join(_REPO_ROOT, "skills")
-
-
-def latency_refs_dir() -> str:
-    """Back-compat alias for the skills tree root.
-
-    Earlier revisions exposed a dedicated `skills/triton/latency-optimizer/
-    references/` subtree of flat perf-tuning markdown. The new skills tree
-    is DSL-partitioned (`skills/triton-ascend/`, `skills/triton-cuda/`,
-    `skills/pypto/`, ...) and the references live inside each DSL's
-    `fundamentals/` / `guides/` subdirs as SKILL.md files. The single
-    root path the LLM Glob's against is the skills tree root itself.
-    """
-    return skills_dir()
+    """Per-DSL skill tree. A relative OP_AUTORESEARCH_AR_SKILLS_ROOT is resolved
+    against _WS_ROOT (the dir it's written relative to), not the process
+    cwd — hooks/pipeline/quick_check run from assorted cwds, and a
+    cwd-relative `..` would Glob a dead tree."""
+    env = os.environ.get("OP_AUTORESEARCH_AR_SKILLS_ROOT")
+    if not env:
+        return _DEFAULT_SKILLS
+    if os.path.isabs(env):
+        return env
+    return os.path.abspath(os.path.join(_WS_ROOT, env))

@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2026 Huawei Technologies Co., Ltd
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Resume an existing autoresearch task.
 
 Usage:
@@ -53,7 +67,7 @@ def _validate_resumable(t) -> tuple[bool, str]:
     if missing:
         return False, f"state.json progress fields missing: {missing}"
     # plan.md present + has pending items → must be structurally valid.
-    # A fully-consumed plan (0 pending) is legal (compute_resume_phase
+    # A fully-consumed plan (0 pending) is legal (phase_on_resume
     # routes it to REPLAN). validate_plan rejects 0-pending plans for
     # lack of an ACTIVE item, so only validate when items exist.
     if os.path.exists(plan_path(t.task_dir)) and has_pending_items(t.task_dir):
@@ -129,11 +143,11 @@ def main():
         sys.exit(1)
     except TaskOwnershipError as e:
         print(f"[resume] ERROR: {e}", file=sys.stderr)
-        print(f"[resume] Another Claude Code session may be running it.",
+        print("[resume] Another Claude Code session may be running it.",
               file=sys.stderr)
-        print(f"[resume] If you're sure no other session is running, "
-              f"add --force:", file=sys.stderr)
-        print(f"[resume]   /autoresearch --resume --force",
+        print("[resume] If you're sure no other session is running, "
+              "add --force:", file=sys.stderr)
+        print("[resume]   /autoresearch --resume --force",
               file=sys.stderr)
         sys.exit(1)
 

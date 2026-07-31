@@ -1,9 +1,9 @@
 # ascendc
 
-Format: a CANNBot-style direct-invoke AscendC project. `--kernel` points at
-an `ascendc_op/` directory; its parent directory must contain `kernel.py`.
+Format: a direct-invoke AscendC project. `--kernel` points at the
+`ascendc_op/` directory; its parent directory must contain `kernel.py`.
 
-Supported example:
+Required layout:
 
 ```text
 add_custom/
@@ -15,8 +15,13 @@ add_custom/
     op_extension/
 ```
 
-Run from the CA repo root after setting `defaults.dsl: ascendc`,
-`defaults.backend: ascend`, and `defaults.framework: torch`:
+`add_custom` is a CANNBot direct-invoke example targeting
+Ascend910B/dav-2201. It builds a PyTorch extension shared library and loads it
+from the sibling `kernel.py` wrapper.
+
+Run from the repository root after setting
+`defaults.dsl: ascendc`, `defaults.backend: ascend`,
+`defaults.framework: torch`:
 
 ```text
 /autoresearch --ref ar_examples/ascendc/add_custom/reference.py --kernel ar_examples/ascendc/add_custom/ascendc_op --op-name add_custom --devices 0

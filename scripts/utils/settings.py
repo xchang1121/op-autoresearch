@@ -1,3 +1,17 @@
+# Copyright 2026 Huawei Technologies Co., Ltd
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Shared accessors for config.yaml.
 
 config.yaml is the SINGLE SOURCE OF TRUTH for the framework reference
@@ -60,6 +74,11 @@ def default_eval_timeout() -> int:
     return _get("defaults", "eval_timeout")
 
 
+def default_reference_data_timeout() -> int:
+    """Reference-data generation budget (seconds) when omitted."""
+    return _get("defaults", "reference_data_timeout")
+
+
 def default_smoke_test_timeout() -> int:
     """quick_check smoke-test budget (seconds) when a task omits it."""
     return _get("defaults", "smoke_test_timeout")
@@ -83,25 +102,30 @@ def default_metric() -> dict:
 def skill_dsl() -> str:
     """Kebab-case name of the skills/ subtree this repo consults
     (`triton-ascend` / `triton-cuda` / `pypto` / `cpp` / `cuda-c` /
-    `tilelang-cuda`). Used by guidance.py to expand `<dsl>` in PLAN /
+    `tilelang-cuda` / `tilelang-ascend` /
+    `ascendc` / `ascendc-catlass`). Used by guidance.py
+    to expand `<dsl>` in PLAN /
     REPLAN / DIAGNOSE prompt Glob patterns to a literal directory name.
     Single-DSL-per-repo by design; lives at defaults/skill_dsl in
     config.yaml, not on per-task TaskConfig."""
     return str(_get("defaults", "skill_dsl"))
 
 
+# --- workspace target triple ------------------------------------------
+# Pinned per repo; same single-target-per-repo design as skill_dsl. The
+# bridge in utils.eval_bridge passes these straight to KernelVerifier; the
+# upstream CA equivalent is eval_kernel.py's argparse defaults.
 def target_backend() -> str:
-    """Backend name pinned for this repo (ascend / cuda / cpu)."""
     return str(_get("defaults", "backend"))
 
 
 def target_framework() -> str:
-    """Reference framework pinned for this repo (torch / mindspore / numpy)."""
     return str(_get("defaults", "framework"))
 
 
 def target_dsl() -> str:
-    """Snake-form DSL adapter name consumed by KernelVerifier."""
+    """Snake-form DSL (`triton_ascend`) — what KernelVerifier consumes.
+    Distinct from `skill_dsl()` (kebab) which names a directory."""
     return str(_get("defaults", "dsl"))
 
 
@@ -115,43 +139,11 @@ def eval_repeats() -> int:
     return _get("eval", "repeats")
 
 
-# --- remote worker -----------------------------------------------------
-def worker_port() -> int:
-    """Worker TCP port. Single source for ar_cli (tunnel/status) and
-    worker.server (bind) so the two cannot drift."""
-    return _get("worker", "port")
-
-
-def worker_ready_timeout() -> float:
-    """Seconds ar_cli waits for a freshly started daemon to answer /status."""
-    return float(_get("worker", "ready_timeout"))
-
-
-def worker_ready_poll_interval() -> float:
-    """Seconds between readiness polls while waiting for daemon startup."""
-    return float(_get("worker", "ready_poll_interval"))
-
-
-def worker_ready_probe_timeout() -> float:
-    """Per-poll /status probe timeout during the readiness loop (short)."""
-    return float(_get("worker", "ready_probe_timeout"))
-
-
-def worker_status_timeout() -> float:
-    """Seconds for a single /status reachability probe."""
-    return float(_get("worker", "status_timeout"))
-
-
-# --- catlass C++ library root (ascendc_catlass DSL only) --------------
-def catlass_root() -> str:
-    """Absolute path to the CATLASS repo root (the directory containing
-    ``include/catlass/``), or empty string to fall through to
-    ``$CATLASS_ROOT`` then ``<repo-root>/thirdparty/catlass``.
-
-    Read by ``eval/catlass_paths.resolve_catlass_root`` between the env
-    var and the standard install location. See catlass section in
-    config.yaml for the full resolution chain."""
-    return str(_get("catlass", "root"))
+# Worker port / readiness timing 之前在这里有 worker_port / worker_ready_*
+# 访问器，现已下线 —— op-autoresearch 全程从 ``cli/service/worker_config.WorkerConfig``
+# 一处读 yaml，workspace 这边没有直接调用 worker.* 字段的脚本。如果需要
+# 在 WA 脚本读 worker.*，请改用 ``from op_autoresearch.cli.service.worker_config
+# import WorkerConfig; cfg = WorkerConfig.load()`` 走单一事实源。
 
 
 # --- batch pre-flight verification timeouts (seconds) ------------------
@@ -215,3 +207,15 @@ def classify_speedup(v: float) -> str:
     if v < speedup_regress_below():
         return "regress"
     return "on-par"
+
+
+def recorded_speedup(src) -> float | None:
+    """THE single reader for the recorded speedup — ``best_speedup``, the
+    per-shape-ratio geomean produced once by ``aggregate.geomean_ratio`` and
+    stored in task state. Accepts a state/result dict or a progress object.
+    Returns None when unset / non-positive. Consumers read speedup from here;
+    they must NOT re-derive it from baseline/best latencies (a different, wrong
+    definition — that ratio is mean(base)/mean(gen), not the geomean of ratios)."""
+    v = src.get("best_speedup") if hasattr(src, "get") \
+        else getattr(src, "best_speedup", None)
+    return float(v) if isinstance(v, (int, float)) and v > 0 else None

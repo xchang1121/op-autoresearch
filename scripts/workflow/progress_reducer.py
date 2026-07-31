@@ -1,3 +1,17 @@
+# Copyright 2026 Huawei Technologies Co., Ltd
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Pure-ish reducers for workflow progress updates.
 
 workflow.baseline and workflow.round still own durable I/O (save_progress
@@ -43,6 +57,18 @@ def eval_result_from_data(eval_data: dict) -> EvalResult:
     )
 
 
+def _shape_progress_fields(metrics: dict) -> dict[str, Any]:
+    """Progress fields derived from the current eval's shape metadata."""
+    fields: dict[str, Any] = {}
+    n_cases = metrics.get("num_cases")
+    if isinstance(n_cases, int) and n_cases >= 1:
+        fields["num_cases"] = int(n_cases)
+    descs = metrics.get("per_shape_descs")
+    if isinstance(descs, list) and descs:
+        fields["per_shape_descs"] = [str(d) for d in descs if d]
+    return fields
+
+
 @dataclass(frozen=True)
 class BaselineReduction:
     progress: Progress
@@ -52,17 +78,6 @@ class BaselineReduction:
     seed_metric: Optional[float]
     dropped_seed_metric: Optional[float]
     anchor: AnchorDecision
-
-
-def _shape_progress_fields(metrics: dict) -> dict[str, Any]:
-    fields: dict[str, Any] = {}
-    n_cases = metrics.get("num_cases")
-    if isinstance(n_cases, int) and n_cases >= 1:
-        fields["num_cases"] = int(n_cases)
-    descs = metrics.get("per_shape_descs")
-    if isinstance(descs, list) and descs:
-        fields["per_shape_descs"] = [str(d) for d in descs if d]
-    return fields
 
 
 def reduce_baseline_init(existing: Progress, config: Any, eval_data: dict,
@@ -81,6 +96,11 @@ def reduce_baseline_init(existing: Progress, config: Any, eval_data: dict,
         dropped_seed_metric = seed_metric
         seed_metric = None
 
+    raw_speedup = metrics.get("speedup_vs_ref")
+    seed_speedup = (float(raw_speedup)
+                    if seed_metric is not None and valid_metric(raw_speedup)
+                    else None)
+
     anchor = resolve_baseline_init_anchor(existing, metrics)
 
     progress = Progress(
@@ -90,6 +110,7 @@ def reduce_baseline_init(existing: Progress, config: Any, eval_data: dict,
         best_metric=seed_metric,
         best_commit=(best_commit if seed_metric is not None
                      else "seed_profile_failed"),
+        best_speedup=seed_speedup,
         baseline_metric=anchor.metric,
         baseline_source=anchor.source,
         baseline_outcome=outcome.value,
@@ -122,13 +143,15 @@ def reduce_round_progress(progress: Progress, eval_result: EvalResult,
                           round_num: int,
                           consecutive_failures: int,
                           best_metric: Optional[float],
-                          best_commit: Optional[str]) -> RoundReduction:
+                          best_commit: Optional[str],
+                          best_speedup: Optional[float] = None) -> RoundReduction:
     anchor = refresh_round_anchor(progress, eval_result.metrics)
     new_progress = progress.apply(
         eval_rounds=round_num,
         consecutive_failures=consecutive_failures,
         best_metric=best_metric,
         best_commit=best_commit,
+        best_speedup=best_speedup,
         baseline_metric=anchor.metric,
         baseline_source=anchor.source,
         baseline_per_shape_us=anchor.per_shape_us,

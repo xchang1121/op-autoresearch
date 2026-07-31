@@ -1,3 +1,17 @@
+# Copyright 2026 Huawei Technologies Co., Ltd
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Authoritative schema for the Progress view of state.json.
 
 Single dataclass owns the field set. Every writer constructs a complete
@@ -12,7 +26,7 @@ is the only entry point that turns these objects into JSON on disk.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict, fields, replace
+from dataclasses import dataclass, asdict, fields, replace
 from typing import Any, Optional
 
 
@@ -27,15 +41,20 @@ class Progress:
     # this field doesn't trip `eval_rounds >= max_rounds` -> FINISH on the
     # first lookup. Real writers (_baseline_init via workflow.baseline)
     # always set the actual config value; the default only fires for
-    # incomplete files. compute_next_phase and compute_resume_phase still
-    # call `progress.get("max_rounds", 999)` for dict-era compatibility,
-    # which now matches the dataclass field default and is consistent.
+    # incomplete files. The pure workflow transition selectors consume this
+    # typed value, so the defensive default remains consistent everywhere.
     max_rounds: int = 999
     consecutive_failures: int = 0
 
     # Best kernel measured so far
     best_metric: Optional[float] = None
     best_commit: Optional[str] = None
+    # Geomean speedup_vs_ref of the best kernel, captured at the round it
+    # became best. Stored (not recomputed at display time) because the
+    # honest geomean needs the per-shape ratios from THAT round; deriving
+    # baseline_metric / best_metric at display would silently fall back to
+    # a mean-ratio. None for old state.json / pre-baseline.
+    best_speedup: Optional[float] = None
 
     # Sticky pytorch baseline (anchors speedup display; pinned by the first
     # baseline_init that captured ref_latency_us, see workflow/seed.py).
@@ -78,8 +97,12 @@ class Progress:
     last_stop_reason: Optional[str] = None
     last_stop_time: Optional[str] = None
 
-    # Auto-stamped by state_store.save_progress when stamp=True
-    last_updated: Optional[str] = None
+    @property
+    def next_round(self) -> int:
+        """SSOT for "the round number about to be evaluated/recorded" =
+        completed rounds + 1. eval (verify-dir step) and record_round both
+        derive from this one rule — no round number is passed across."""
+        return self.eval_rounds + 1
 
     # ---- dict-compat read API --------------------------------------------
     # Readers do `progress.get("X", default)` everywhere; supplying this

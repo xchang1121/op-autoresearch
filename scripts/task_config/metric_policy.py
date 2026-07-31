@@ -1,8 +1,22 @@
+# Copyright 2026 Huawei Technologies Co., Ltd
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Metric comparison and constraint checking.
 
 Pure data-shape and arithmetic logic — no I/O, no subprocess, no YAML.
-The `EvalResult` dataclass is the contract `task_config.run_eval`
-returns; downstream consumers (baseline, pipeline, dashboard) read
+The `EvalResult` dataclass is the contract eval_runner writes into;
+downstream consumers (keep_or_discard, baseline_init, dashboard) read
 from it.
 
 What lives here:
@@ -14,8 +28,6 @@ What lives here:
   - `check_constraints`    — hard-constraint check
                              ({metric: (op_str, threshold)} →
                               list of violation strings).
-  - `format_result_summary`— one-line human-readable summary used by
-                             stderr logging in baseline / pipeline.
 
 Why a separate module: the comparison logic is the only piece of
 task_config that has zero external dependencies and zero side effects;
@@ -45,6 +57,12 @@ class EvalResult:
     # "ref" → broken --ref file (the only sub-flavor of INFRA_FAIL the
     # downstream messages distinguish). None on success or other failures.
     error_source: Optional[str] = None
+    # Path to the on-disk FAIL report (full per-case + complete log) the agent
+    # opens with its file reader, instead of a truncated stdout dump.
+    fail_report: Optional[str] = None
+    # failure_extractor signals, already parsed by eval_bridge from the FULL log;
+    # forwarded so pipeline doesn't re-parse a truncated tail.
+    failure_signals: dict = field(default_factory=dict)
 
     @property
     def correctness(self) -> bool:
@@ -108,23 +126,3 @@ def is_improvement(
     else:
         relative_pct = (cur_val - best_val) / abs(best_val) * 100
     return relative_pct > threshold
-
-
-# ---------------------------------------------------------------------------
-# Human-readable summary
-# ---------------------------------------------------------------------------
-
-def format_result_summary(result: EvalResult) -> str:
-    """Human-readable one-line summary."""
-    if result.outcome != EvalOutcome.OK:
-        prefix = result.outcome.value.upper()
-        if result.error:
-            return f"{prefix}: {result.error}"
-        return f"{prefix} (metrics: {result.metrics})"
-    parts = ["outcome: OK"]
-    for key, val in result.metrics.items():
-        if isinstance(val, float):
-            parts.append(f"{key}: {val:.4f}")
-        else:
-            parts.append(f"{key}: {val}")
-    return "  |  ".join(parts)

@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2026 Huawei Technologies Co., Ltd
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Task directory scaffolder for Claude Code autoresearch.
 
@@ -7,7 +21,9 @@ Zero external dependency. Creates a self-contained task directory with:
   - reference.py (correctness baseline; AST-checked via utils.ref_ast.
     validate_ref before scaffold copies it. Runtime correctness is
     validated by --run-baseline whose verify routine tags error_source.)
-  - kernel.py (editable seed; written from the user's --kernel file)
+  - kernel.py (editable seed; from --kernel file, or sibling kernel.py when
+    --kernel is a multi-file DSL project directory)
+  - <dsl project>/ (multi-file DSLs only, when --kernel points at that folder)
   - .ar_state/ (progress tracking)
   - .git/ (baseline commit)
 
@@ -15,7 +31,8 @@ Usage:
     # NOTE: --devices values below are placeholders; pass the actual free
     # device id at invocation time.
 
-    # Local eval (arch auto-derived via the backend-specific probe):
+    # Local eval (arch auto-derived from device — npu-smi for ascend,
+    # nvidia-smi for cuda; dispatch via config.yaml defaults.backend):
     python scripts/scaffold.py --ref reference.py --kernel kernel.py --op-name my_op --devices <DEV>
 
     # Custom output directory:
@@ -32,6 +49,7 @@ import subprocess
 import sys
 import time
 import uuid
+from pathlib import Path
 
 import yaml
 
@@ -43,19 +61,46 @@ import yaml
 # `scaffold.validate_ref` working.
 # ---------------------------------------------------------------------------
 from utils.ref_ast import validate_ref  # noqa: E402, F401  (re-export)
+from utils.git_utils import commit_in_task  # noqa: E402
+from utils.hw_detect import derive_arch, probe_hint  # noqa: E402
 from utils.settings import (  # noqa: E402
     default_max_rounds, default_eval_timeout, default_metric,
     default_code_checker_enabled, target_backend, target_dsl,
 )
-from task_config import REF_FILE_DEFAULT  # noqa: E402
+from op_autoresearch.op.utils.task_layout import REF_FILE_DEFAULT  # noqa: E402
+from phase_machine import task_summary  # noqa: E402
+from task_handle import open_task, Role  # noqa: E402
 
 
+# ---------------------------------------------------------------------------
 # DSL-aware scaffold dispatch: every per-DSL knob (does --kernel take a
 # directory, what files beyond kernel.py are editable, what extra source
-# tree gets copied into task_dir) is owned by the DSL adapter.
+# tree gets copied into task_dir) is owned by the DSL adapter. Scaffold
+# stays DSL-name-agnostic.
+# ---------------------------------------------------------------------------
+
 def _scaffold_dsl_adapter():
-    from eval.adapters.factory import get_dsl_adapter
+    from op_autoresearch.op.verifier.adapters.factory import get_dsl_adapter
     return get_dsl_adapter(target_dsl())
+
+
+def _run_initial_baseline(task_dir: str) -> int:
+    """Activate a newly scaffolded task, then run its baseline.
+
+    PostToolUse cannot own this transition: ``--run-baseline`` executes
+    baseline.py inside the scaffold command, before the hook can observe the
+    new task.  Keep activation next to that synchronous call so every caller
+    (Claude, OpenCode, batch, or a plain CLI) sees the same INIT -> BASELINE
+    ordering.
+    """
+    with open_task(task_dir, role=Role.SUPERVISOR) as task:
+        task.activate(fresh=True)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    return subprocess.run([
+        sys.executable,
+        os.path.join(script_dir, "engine", "baseline.py"),
+        task_dir,
+    ]).returncode
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +145,8 @@ def scaffold_task_dir(
     # Write reference.py and the seed kernel.py from the user's files.
     _write(task_dir, REF_FILE_DEFAULT, ref_code)
     _write(task_dir, editable_filename, kernel_code)
+    # Per-DSL hook: copy extra source trees (e.g. catlass_op/) +
+    # any one-shot patches the adapter wants done at scaffold time.
     _scaffold_dsl_adapter().materialize_project_tree(task_dir, kernel_project_src)
 
     # NPUKernelBench-style refs read shape lists from a sibling JSON via
@@ -150,19 +197,18 @@ def scaffold_task_dir(
                 _shutil.copy(src, os.path.join(task_dir, dest_name))
                 discovered_data_files.append(dest_name)
         except Exception as _e:
-            print(f"[scaffold] WARNING: sidecar data file copy failed: {_e}",
-                  file=sys.stderr)
+            print(f"[scaffold] WARNING: sidecar data file copy failed: {_e}")
 
     # Generate task.yaml — only fields that vary per-task. dsl /
-    # framework / backend are constants (triton_ascend / torch / ascend)
-    # baked into TaskConfig; not written here.
+    # framework / backend are pinned per repo in config.yaml's
+    # ``defaults`` block (utils.settings.target_*); not written here.
     # Probe the ref's case count once, here at scaffold time (cwd has the
     # ref + data_files already written above). Pin it into task.yaml
     # `eval.num_cases` so later rounds — including a first remote baseline
     # on a dev host that can't import the ref — scale the eval timeout and
     # sticky fingerprint correctly instead of falling back to 1. Probe
-    # failure (no torch/CANN here) just omits the field; the eval host
-    # resolves cases inside the formal verifier path.
+    # failure (no torch/CANN here) just omits the field; eval client then
+    # falls back to its own probe / fingerprint reuse as before.
     eval_block = {"timeout": eval_timeout}
     num_cases = _probe_num_cases(task_dir, REF_FILE_DEFAULT)
     if num_cases and num_cases >= 1:
@@ -200,7 +246,7 @@ def scaffold_task_dir(
     # global config when this field is absent, so an unpinned task would
     # silently flip behaviour if the global default is retuned — same
     # pinning rationale as eval.timeout / metric.improvement_threshold.
-    # quick_check.py and phase_machine.validate_kernel honor this field.
+    # quick_check.py honors this field.
     task_yaml["code_checker"] = {"enabled": bool(code_checker_enabled)}
 
     yaml_content = yaml.dump(task_yaml, default_flow_style=False, allow_unicode=True)
@@ -216,46 +262,36 @@ def scaffold_task_dir(
 
 
 def _probe_num_cases(task_dir: str, ref_file: str):
-    """Best-effort case count for task.yaml `eval.num_cases`.
-
-    The formal eval path can run on a different host from scaffold. When
-    scaffold can import the ref locally, pin the case count into task.yaml
-    so timeout sizing and baseline fingerprinting do not depend on a
-    dev-host probe later. If the ref needs unavailable runtime packages,
-    return None and let the eval host resolve cases in the verifier path.
-    """
+    """Best-effort case count for task.yaml ``eval.num_cases``. Loads the
+    just-written reference module. Generated multi-shape refs expose a
+    literal ``CASES`` table, so count that first instead of calling
+    ``get_input_groups()`` and constructing large tensors at scaffold time.
+    For generic refs, delegate to ``utils.input_groups.num_cases`` so
+    single / dyn_list / input_groups refs still resolve consistently.
+    Returns None when the ref can't be imported here (e.g. no torch on the
+    dev host); caller omits the field and eval_timeout scaling falls back
+    to a runtime re-probe."""
+    import importlib.util
     ref_path = os.path.join(task_dir, ref_file)
     if not os.path.isfile(ref_path):
         return None
-
-    ref_dir = os.path.dirname(ref_path) or "."
-    added = ref_dir not in sys.path
-    if added:
-        sys.path.insert(0, ref_dir)
     try:
-        import importlib.util
-        from utils.input_groups import resolve as _resolve
-
-        mod_name = f"_ar_ref_case_probe_{int(time.time())}_{uuid.uuid4().hex}"
-        spec = importlib.util.spec_from_file_location(mod_name, ref_path)
-        if spec is None or spec.loader is None:
-            return None
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return max(len(_resolve(mod)), 1)
-    except Exception as exc:
-        print(
-            f"[scaffold] WARNING: case-count probe failed: "
-            f"{type(exc).__name__}: {exc}; omitting eval.num_cases.",
-            file=sys.stderr,
-        )
+        old_dont_write_bytecode = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec = importlib.util.spec_from_file_location("_ref_probe", ref_path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+        finally:
+            sys.dont_write_bytecode = old_dont_write_bytecode
+        cases = getattr(mod, "CASES", None)
+        if isinstance(cases, (list, tuple)):
+            return len(cases)
+        from utils.input_groups import num_cases
+        return num_cases(mod)
+    except Exception:
         return None
-    finally:
-        if added:
-            try:
-                sys.path.remove(ref_dir)
-            except ValueError:
-                pass
+
 
 def _write(task_dir: str, rel_path: str, content: str):
     full_path = os.path.join(task_dir, rel_path)
@@ -272,9 +308,6 @@ def _git_init(task_dir: str):
     The actual commit goes through git_utils.commit_in_task — same code
     path hooks use for round commits, so reliability is consistent.
     """
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from utils.git_utils import commit_in_task
-
     subprocess.run(["git", "init"], cwd=task_dir, capture_output=True, check=True)
     ok, info = commit_in_task(task_dir, ["."], "scaffold: baseline")
     if not ok:
@@ -298,13 +331,13 @@ def _make_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ref", required=True,
                         help="Path to reference.py (Model/get_inputs format)")
     parser.add_argument("--kernel", required=True,
-                        help="Path to seed kernel file, or a DSL project "
-                             "directory when the configured DSL supports it")
+                        help="Seed kernel .py file, or multi-file DSL project "
+                             "directory with sibling kernel.py")
     parser.add_argument("--op-name", default=None,
                         help="Operator name (required)")
-    # The repo is locked to triton_ascend on Ascend NPU + PyTorch by
-    # construction. arch is derived from the picked --devices via the
-    # backend-specific probe.
+    # backend / framework / dsl are pinned per repo in config.yaml's
+    # ``defaults`` block. arch is derived from the picked --devices via
+    # the backend-appropriate probe (npu-smi / nvidia-smi).
     parser.add_argument("--devices", default=None,
                         help="Comma-separated device IDs for local eval "
                              "(e.g. '5' or '0,1,2,3'). Required.")
@@ -319,8 +352,8 @@ def _make_arg_parser() -> argparse.ArgumentParser:
     # presence yields False (pinned into task.yaml as enabled: false).
     parser.add_argument("--no-code-checker", dest="code_checker",
                         action="store_const", const=False, default=None,
-                        help=("Disable the static DSL code check "
-                              "(CodeChecker) for this task. "
+                        help=("Disable the static Triton regression check "
+                              "(validate_triton_impl) for this task. "
                               "Useful when the regression rules are too "
                               "strict for the chosen kernel style. Writes "
                               "`code_checker: {enabled: false}` into "
@@ -328,7 +361,7 @@ def _make_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--worker-url", default="",
                         help="Remote worker URL(s) (host:port, comma-separated). "
                              "Routes eval through the remote HTTP worker "
-                             "instead of the local backend probe.")
+                             "instead of probing a local device.")
     return parser
 
 
@@ -336,12 +369,11 @@ def main():
     parser = _make_arg_parser()
     args = parser.parse_args()
 
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from utils.hw_detect import derive_arch, probe_hint
-
     # Hardware resolution: --devices is required unless --worker-url routes
-    # eval to a remote machine. backend / framework / dsl are pinned in
-    # config.yaml; arch varies per machine and is probed from --devices.
+    # eval to a remote machine. dsl / framework / backend are pinned by
+    # this workspace's config.yaml (single-target-per-repo); arch varies
+    # per machine and is auto-probed from the picked --devices via the
+    # backend-appropriate tool (npu-smi for ascend, nvidia-smi for cuda).
     backend = target_backend()
     devices_list: list = []
     args.arch = None
@@ -357,9 +389,6 @@ def main():
     if args.devices:
         devices_list = [int(d.strip()) for d in args.devices.split(",")
                         if d.strip()]
-    if not devices_list:
-        # Remote-only: default to device 0 (the worker owns the real NPU).
-        devices_list = [0]
 
     if not has_remote:
         args.arch = derive_arch(devices_list[0], backend=backend)
@@ -388,6 +417,10 @@ def main():
         print(json.dumps({"status": "error", "error": str(e)}))
         sys.exit(1)
 
+    # Ask the configured DSL's adapter how to interpret --kernel. The
+    # default reads a .py file; catlass overrides to accept a directory
+    # and resolve the sibling kernel.py. Errors raised here render as
+    # JSON-on-stdout for parse_args to forward.
     kernel_path = os.path.abspath(args.kernel)
     if not os.path.exists(kernel_path):
         print(json.dumps({"status": "error",
@@ -407,7 +440,7 @@ def main():
     )
 
     # devices_list was resolved above.
-    print(f"[scaffold] Creating task directory for {args.op_name}...", file=sys.stderr)
+    print(f"[scaffold] Creating task directory for {args.op_name}...")
 
     task_dir = scaffold_task_dir(
         ref_code=ref_code,
@@ -426,17 +459,26 @@ def main():
         editable_files=editable_files,
     )
 
-    print(f"[scaffold] Task directory created: {task_dir}", file=sys.stderr)
-    print(f"[scaffold] Files:", file=sys.stderr)
+    print(f"[scaffold] Task directory created: {task_dir}")
+    print("[scaffold] Files:")
     for f in sorted(os.listdir(task_dir)):
-        print(f"  {f}", file=sys.stderr)
+        print(f"  {f}")
 
-    # Write per-op pointer so batch/run.py picks the exact dir we just
-    # made, not whichever <op>_* in ar_tasks/ happens to have the freshest
-    # mtime (which races with concurrent runs and stale prior task_dirs).
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from phase_machine import write_task_dir_pointer
-    write_task_dir_pointer(args.op_name, task_dir)
+    # Bind directly into this batch's manifest. A repo-global per-op pointer
+    # races when two batches optimize the same op, so batch identity stays in
+    # AR_BATCH_DIR/AR_BATCH_OP instead.
+    batch_dir = os.environ.get("AR_BATCH_DIR")
+    batch_op = os.environ.get("AR_BATCH_OP")
+    if batch_dir and batch_op == args.op_name:
+        try:
+            sys.path.insert(
+                0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "batch"))
+            import manifest as batch_manifest  # noqa: E402
+            batch_manifest.update_case(
+                Path(batch_dir), args.op_name,
+                task_dir=os.path.abspath(task_dir))
+        except Exception as e:
+            print(f"[scaffold] warning: failed to update batch task_dir: {e}")
 
     # Reference validation is now a single path through baseline.py: the
     # generated verify routine splits ref-side and kernel-side try/excepts
@@ -449,12 +491,8 @@ def main():
     # the source --ref file before copying), so import errors / missing
     # symbols never reach this point.
     if args.run_baseline:
-        print(f"[scaffold] Running baseline eval...", file=sys.stderr)
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        baseline_cmd = [sys.executable,
-                        os.path.join(script_dir, "engine", "baseline.py"),
-                        task_dir]
-        rc = subprocess.run(baseline_cmd).returncode
+        print("[scaffold] Running baseline eval...")
+        rc = _run_initial_baseline(task_dir)
         # baseline exit codes are binary now (workflow.baseline._EXIT_FOR):
         #   0 = task activatable (OK or KERNEL_FAIL — hook routes to PLAN)
         #   4 = task NOT activatable (INFRA_FAIL — operator must intervene)
@@ -466,7 +504,6 @@ def main():
             # before the first save_state), in which case err_source
             # stays None and we fall through to the generic INFRA_FAIL
             # hint below.
-            from phase_machine import task_summary  # noqa: E402
             summary = task_summary(task_dir) or {}
             err_source = summary.get("baseline_error_source")
             if err_source == "ref":
@@ -510,7 +547,6 @@ def main():
     # When --run-baseline wasn't passed, summary is None (no state.json
     # yet) → outcome stays None and the caller knows it's an
     # un-baselined task.
-    from phase_machine import task_summary  # noqa: E402
     summary = task_summary(task_dir) or {}
     outcome = summary.get("baseline_outcome")
     print(json.dumps({"task_dir": task_dir, "status": "ok",

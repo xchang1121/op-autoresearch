@@ -1,3 +1,17 @@
+# Copyright 2026 Huawei Technologies Co., Ltd
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Print a human-readable report of <batch_dir>/batch_progress.json.
 
 Designed for the "after the batch is done, what happened?" view — distinct
@@ -20,6 +34,7 @@ import manifest as mf
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from utils.settings import (  # noqa: E402
     classify_speedup, speedup_improved_above, speedup_regress_below,
+    recorded_speedup,
 )
 
 
@@ -62,9 +77,9 @@ def main() -> int:
     for k, v in by_status.get("done", []):
         r = v.get("result") or {}
         bm, best = r.get("baseline_metric"), r.get("best_metric")
-        if (isinstance(bm, (int, float)) and isinstance(best, (int, float))
-                and best > 0):
-            speedups.append((k, bm / best, bm, best))
+        sp = recorded_speedup(r)
+        if sp is not None:
+            speedups.append((k, sp, bm, best))
         else:
             no_metric.append(k)
 
@@ -75,7 +90,7 @@ def main() -> int:
         improved = labels.count("improved")
         onpar = labels.count("on-par")
         regr = labels.count("regress")
-        print("speedup (baseline / best, higher better):")
+        print("speedup (best_speedup geomean; higher better):")
         print(f"  ops with metric: {len(speedups)}")
         print(f"  median:          {statistics.median(vals):.2f}x")
         print(f"  best:            {max(vals):.2f}x")

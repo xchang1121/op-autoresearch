@@ -1,4 +1,4 @@
-﻿# Copyright 2026 Huawei Technologies Co., Ltd
+# Copyright 2026 Huawei Technologies Co., Ltd
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,12 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Eval entry point: CA shim into the WA-compatible formal eval path.
+"""Eval entry point — WA-side shim into ``utils.eval_bridge``.
 
-``run_eval(task_dir, config, device_id=None, worker_urls=None)`` is the
-contract baseline.py and pipeline.py call. The implementation delegates to
-``utils.akg_eval.eval_kernel``, which builds ``eval.KernelVerifier`` and
-routes local/remote execution through the worker manager. There is a single verification/profile path for foreground, batch, and worker execution.
+`run_eval(task_dir, config, device_id=None, worker_urls=None) -> EvalResult`
+is the contract baseline / pipeline call. CA's standalone implementation
+ships a self-contained `eval_request` / `eval_assemble` / `package_builder`
+stack that drives `utils.eval_runner.local_eval` locally or POSTs a tarball
+to a CA worker. WA reuses ``op_autoresearch.op.verifier.KernelVerifier`` +
+``op_autoresearch.core.worker.manager`` via ``utils.eval_bridge.eval_kernel`` instead,
+so this module is a one-call adapter that maps the bridge's dict result onto
+the ``EvalResult`` shape downstream consumers (baseline / pipeline /
+keep_or_discard / dashboard) already understand.
 """
 from __future__ import annotations
 
@@ -34,12 +39,11 @@ _OUTCOME_VALUES = {e.value for e in EvalOutcome}
 
 def _resolve_worker_url(worker_urls: Optional[list],
                         config: TaskConfig) -> Optional[str]:
-    """Pick the first non-empty URL.
-
-    Worker registration and device scheduling are handled downstream by
-    ``utils.akg_eval`` / the worker manager, so this shim does not keep a
-    second scheduler.
-    """
+    """Pick the first non-empty URL. CA's eval_client probes /api/v1/status
+    on every URL and ranks by free device slots — that's an HTTP worker
+    protocol the OP_AUTORESEARCH worker doesn't expose. Multi-URL fallback is left
+    out on purpose; multi-worker scheduling lives in op_autoresearch's
+    `core.worker.manager` once the URL is registered there."""
     candidates = worker_urls or getattr(config, "worker_urls", None) or []
     for u in candidates:
         if u and str(u).strip():
@@ -58,7 +62,7 @@ def _resolve_device_arg(device_id: Optional[int], config: TaskConfig,
     if worker_url:
         return None
     print(
-        "[akg_eval] WARNING: no device specified (no device_id arg, "
+        "[eval_bridge] WARNING: no device specified (no device_id arg, "
         "no `devices` field in task.yaml). Defaulting to local device 0.",
         file=sys.stderr,
     )
@@ -67,14 +71,16 @@ def _resolve_device_arg(device_id: Optional[int], config: TaskConfig,
 
 def run_eval(task_dir: str, config: TaskConfig,
              device_id: Optional[int] = None,
-             worker_urls: Optional[list] = None) -> EvalResult:
-    """Route eval through ``utils.akg_eval.eval_kernel`` and convert the
-    returned dict into the ``EvalResult`` shape consumed by the workflow.
-    """
-    scripts_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if scripts_dir not in sys.path:
-        sys.path.insert(0, scripts_dir)
-    from utils.akg_eval import eval_kernel  # noqa: E402
+             worker_urls: Optional[list] = None,
+             current_step: int = 0) -> EvalResult:
+    """Route the eval through ``utils.eval_bridge.eval_kernel`` → ``EvalResult``.
+    ``worker_urls`` empty → local worker on ``device_id``; else first URL is a
+    RemoteWorker. ``current_step`` (caller-owned: pipeline=round_num, seed=0)
+    numbers the verify dir so each round's artifacts are kept, not overwritten."""
+    _scripts_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _scripts_dir not in sys.path:
+        sys.path.insert(0, _scripts_dir)
+    from utils.eval_bridge import eval_kernel  # noqa: E402
 
     worker_url = _resolve_worker_url(worker_urls, config)
     dev_id = _resolve_device_arg(device_id, config, worker_url)
@@ -82,11 +88,12 @@ def run_eval(task_dir: str, config: TaskConfig,
     try:
         raw = eval_kernel(task_dir, config,
                           device_id=dev_id,
-                          worker_url=worker_url)
+                          worker_url=worker_url,
+                          current_step=current_step)
     except Exception as e:  # pylint: disable=broad-exception-caught
         return EvalResult(
             outcome=EvalOutcome.INFRA_FAIL,
-            error=f"akg_eval.eval_kernel raised {type(e).__name__}: {e}",
+            error=f"eval_bridge.eval_kernel raised {type(e).__name__}: {e}",
             error_source="infra",
         )
 
@@ -99,4 +106,6 @@ def run_eval(task_dir: str, config: TaskConfig,
         error=raw.get("error"),
         raw_output=str(raw.get("raw_output_tail") or ""),
         error_source=raw.get("error_source"),
+        fail_report=raw.get("fail_report"),
+        failure_signals=raw.get("failure_signals") or {},
     )

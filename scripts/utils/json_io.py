@@ -1,3 +1,17 @@
+# Copyright 2026 Huawei Technologies Co., Ltd
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """JSON helpers shared by every disk / HTTP JSON boundary.
 
 `sanitize_floats` strips `inf` / `-inf` / `nan` to `None`. Python's
@@ -6,7 +20,7 @@ which is NOT valid strict JSON: FastAPI's encoder rejects them with
 HTTP 500, and consumers that load with the default `parse_constant`
 get back `float('inf')` / `float('nan')` (then break on arithmetic
 or comparison). Run every metrics-bearing dict through this before
-serialising — the eval adapters filter most non-finite values, but
+serialising — `eval_assemble` filters most non-finite values, but
 per-shape arrays / pass-through scalars / artifact JSON blobs still
 slip through, so the sanitiser is the canonical safety net.
 
@@ -15,15 +29,17 @@ through here:
 
   - phase_machine.state_store: state.json (single source of truth)
                                 + history.jsonl (append-only round log)
-  - utils.akg_eval / KernelVerifier sidecars
-  - worker.server: RemoteWorker API responses (FastAPI 500 path)
+  - engine.eval_kernel: .eval_result*.json sidecar
+  - utils.eval_runner: profile-block artifact JSONs
+  - worker.server: /api/v1/run response (FastAPI 500 path)
 """
 from __future__ import annotations
 
 import json
 import math
 import os
-from typing import Any, List, Optional
+import tempfile
+from typing import Any, List
 
 
 def _read_whole_file(path: str) -> str:
@@ -77,16 +93,28 @@ def sanitize_floats(obj: Any) -> Any:
     return obj
 
 
-def parse_last_json_line(text: str) -> Optional[dict]:
-    """Last `{...}` line in `text`, parsed. None if no line is valid
-    JSON. Non-JSON lines after the result don't cause false negatives."""
-    if not text:
-        return None
-    for line in reversed(text.splitlines()):
-        line = line.strip()
-        if line.startswith("{") and line.endswith("}"):
-            try:
-                return json.loads(line)
-            except json.JSONDecodeError:
-                continue
-    return None
+def atomic_write_text(path: str, text: str) -> None:
+    """Replace ``path`` with ``text`` using a writer-unique temp file."""
+    parent = os.path.dirname(os.path.abspath(path))
+    os.makedirs(parent, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(
+        dir=parent, prefix=f".{os.path.basename(path)}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        try:
+            os.remove(tmp)
+        except FileNotFoundError:
+            pass
+
+
+def atomic_write_json(path: str, value: Any, *, indent: int = 2) -> None:
+    """Strict-JSON atomic write shared by state and intent records."""
+    atomic_write_text(
+        path,
+        json.dumps(sanitize_floats(value), ensure_ascii=False, indent=indent),
+    )

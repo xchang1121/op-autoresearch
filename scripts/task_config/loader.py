@@ -30,22 +30,22 @@ import os
 import yaml
 
 
-# File-name conventions (REF_FILE_DEFAULT / py_stem / editable-files
-# helpers / resolve_kernel_paths_for_op) live in akg_agents.op.utils.
-# task_layout — workflow-neutral SoT. Re-exported here for back-compat
-# (legacy callers still import from task_config.loader).
-
-from task_config.dsl_project_config import flatten_task_yaml_dsl_blocks  # noqa: E402
-from task_config.task_layout import REF_FILE_DEFAULT, py_stem  # noqa: E402, F401
+from op_autoresearch.op.utils.dsl_project_config import flatten_task_yaml_dsl_blocks  # noqa: E402
+from op_autoresearch.op.utils.task_layout import REF_FILE_DEFAULT  # noqa: E402
 
 
 def _is_contained(path: str) -> bool:
-    """Return True iff `path` is a relative path that does not escape
-    its parent. False for absolute paths, drive-letter forms, and
-    paths containing ``..`` segments.
+    """Return True iff `path` is a relative path that doesn't escape its
+    parent. False for absolute paths (any platform), drive-letter forms,
+    paths containing `..` segments, or paths whose normalised form would
+    resolve outside the empty-base join target.
 
-    Used at task.yaml load time so verifier packaging cannot read or
-    ship files outside the task directory.
+    Used at task.yaml load time to refuse editable_files / data_files /
+    ref_file entries that point outside the task_dir. Without this, a
+    hand-edited (or hostile) task.yaml could list `../../secret.txt`
+    and package_builder would read + tar the file before the remote
+    worker's safe_extract had a chance to reject it on extraction —
+    the bytes would already have left the client.
     """
     if not path:
         return False
@@ -110,19 +110,21 @@ class TaskConfig:
     # Sibling files the ref module reads at runtime (NPUKernelBench-style
     # `<op>.json` shape lists, sglang-style `ref.pt` output caches,
     # auxiliary `.py` imports, etc.). Listed by basename relative to
-    # task_dir and forwarded into the formal verifier task package.
+    # task_dir. The remote-eval package builder ships them alongside
+    # task.yaml + ref + editable; local eval doesn't use the field.
     data_files: list = field(default_factory=list)
 
     # Eval params
-    # Per-SHAPE budget for verify/profile in seconds. The formal eval
-    # path accounts for num_cases when sizing verifier work.
+    # Per-SHAPE budget for verify/profile in seconds. eval_client scales it
+    # by num_cases (probed from the ref module) before invoking the eval
+    # subprocess, so the wall-clock cap is eval_timeout * num_cases.
     # Single-shape refs (num_cases=1) keep the original semantics.
     eval_timeout: int = 600
 
     # Explicit case-count override (task.yaml `eval.num_cases`). When > 0,
-    # the formal eval path uses it directly instead of importing the ref
-    # module to probe get_inputs/get_input_groups on hosts that may lack
-    # torch/CANN. 0 = auto.
+    # eval_request uses it directly instead of importing the ref module to
+    # probe get_inputs/get_input_groups — lets dev hosts without torch/CANN
+    # scale the eval timeout and sticky fingerprint correctly. 0 = auto.
     num_cases: int = 0
 
     # Metric
@@ -137,11 +139,11 @@ class TaskConfig:
     smoke_test_script: Optional[str] = None
     smoke_test_timeout: int = 10
 
-    # DSL-aware static check (CodeChecker) on editable files.
+    # Triton regression check (validate_triton_impl) on editable files.
     # Default on; disable per-task via `code_checker.enabled: false` in
     # task.yaml or scaffold's --no-code-checker flag. The yaml key name
     # is kept as `code_checker.enabled` for back-compat with existing
-    # task.yaml files. When off, quick_check and validate_kernel skip
+    # task.yaml files. When off, quick_check skips
     # the regression check but still reject the scaffold TODO placeholder.
     code_checker_enabled: bool = True
 
@@ -163,7 +165,7 @@ class TaskConfig:
 
     # Per-DSL knobs (e.g. ``catlass.root`` / ``catlass.op_dir`` or
     # ``ascendc.op_dir``). Keys are flat (``catlass_root`` /
-    # ``catlass_op_dir`` / ``ascendc_op_dir`` historically); akg_eval
+    # ``catlass_op_dir`` / ``ascendc_op_dir`` historically); eval_bridge
     # forwards them verbatim into the eval ``config_dict`` + ``task_info``
     # so the adapter's ``prepare_config`` consumes them without TaskConfig
     # knowing any DSL.
@@ -244,9 +246,12 @@ def load_task_config(task_dir: str) -> Optional[TaskConfig]:
     else:
         data_files = []
 
-    # Refuse path-escaping entries before they reach verifier packaging.
-    # Without containment, a hand-edited task.yaml could point outside
-    # task_dir and leak unrelated local files into a remote eval bundle.
+    # Refuse path-escaping entries before they reach package_builder /
+    # eval_runner. The package builder reads the file off disk
+    # (task_dir + name); without containment a `../../secret` in
+    # task.yaml would be slurped into the tar and shipped to the
+    # remote worker even though the worker's safe_extract would reject
+    # it on the other side — the bytes have already left.
     raw_editable = raw.get("editable_files") or []
     editable_files = _filter_contained(list(raw_editable), "editable_files")
     data_files = _filter_contained(data_files, "data_files")

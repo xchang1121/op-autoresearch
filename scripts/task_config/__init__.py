@@ -12,26 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""task_config package facade.
+"""task_config package — facade over three single-concern submodules.
 
 Layout:
 
-    loader         TaskConfig dataclass + task.yaml parsing.
-    metric_policy  EvalOutcome/EvalResult and metric comparison helpers.
-    eval_client    Public run_eval entry point. It delegates to
-                   utils.akg_eval and the formal KernelVerifier chain.
+    loader            — TaskConfig dataclass + load_task_config (YAML
+                        parsing). No internal deps; everyone else
+                        consumes TaskConfig from here.
+    metric_policy     — EvalResult, is_improvement, check_constraints.
+                        Pure data + arithmetic;
+                        no I/O. Imported by keep_or_discard, dashboard.
+    eval_client       — Local subprocess + remote HTTP transport,
+                        result assembly. Depends on loader +
+                        metric_policy. Local drives the static
+                        `eval_kernel.py` via `eval_runner.local_eval`;
+                        remote ships a `package_builder` tar.gz to a
+                        worker `/api/v1/run` endpoint.
+    package_builder   — task.yaml + ref + editable → tar.gz bytes,
+                        for the remote transport. No deps outside loader.
 
-Only names imported by outside packages are re-exported here. Historical
-CA-only eval transport helpers were removed; callers should not import
-private task_config modules for eval dispatch.
+This `__init__.py` re-exports only the names actually imported from
+outside the package. Submodule-private helpers (operator tables,
+internal result assembly) are not re-laundered through the facade —
+reach into the submodule explicitly when you need them.
 """
 # fmt: off
 from .loader import (
     TaskConfig, load_task_config,
-    REF_FILE_DEFAULT, py_stem,
+    REF_FILE_DEFAULT,
 )
 from .metric_policy import (
-    EvalOutcome, EvalResult, check_constraints, is_improvement, format_result_summary,
+    EvalOutcome, EvalResult, check_constraints, is_improvement,
 )
 from .eval_client import run_eval
 # fmt: on

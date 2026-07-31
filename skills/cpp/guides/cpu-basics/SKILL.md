@@ -94,7 +94,7 @@ torch::Tensor standard_kernel(torch::Tensor x) {
 
 ### 完整模板示例
 
-下方模板可作为 CPU KernelBench 算子的起始实现。
+参考示例位置: `skills/cpp/docs/examples/torch_xxx_kernel.py`
 
 ```python
 import torch
@@ -417,5 +417,11 @@ TORCH_CHECK(x.dim() > 0, "Input tensor must have at least one dimension");
 
 ## 7. 更多示例参考
 
-本文件的模板、API 注意事项和优化建议已经覆盖 CPU KernelBench
-算子的常用实现路径。
+更多完整的算子实现示例，请参考：
+
+- **基础文档**: `skills/cpp/docs/basic_docs.md`
+- **优化建议**: `skills/cpp/docs/suggestion_docs.md`
+- **API 手册**: `skills/cpp/docs/api/api.md`
+- **代码模板**: `skills/cpp/docs/examples/torch_xxx_kernel.py`
+
+这些文档提供了完整的实现指南和参考模板。

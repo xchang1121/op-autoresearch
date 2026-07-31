@@ -16,7 +16,7 @@
 
 The eval pipeline has three callers that care about the PyTorch/ref
 anchor:
-  - formal eval decides whether sticky baseline can skip ref profiling.
+  - eval_request decides whether sticky baseline can skip ref profiling.
   - workflow.baseline records the round-0 anchor.
   - workflow.round refreshes the anchor when a later round finally has a
     comparable fresh ref measurement.
@@ -114,7 +114,7 @@ class StickyDecision:
 
 
 def sticky_override_from_progress(progress: Any,
-                                  fingerprint: dict[str, int]
+                                  fingerprint: dict[str, Any]
                                   ) -> StickyDecision:
     """Return the sticky baseline override when the stored anchor is valid."""
     if progress is None or progress.get("baseline_source") != "ref":
@@ -139,7 +139,7 @@ class AnchorDecision:
     metric: Optional[float]
     source: Optional[str]
     per_shape_us: Optional[list[float]]
-    fingerprint: Optional[dict[str, int]]
+    fingerprint: Optional[dict[str, Any]]
     reused_existing: bool
     changed: bool
     message: Optional[str] = None
@@ -253,7 +253,7 @@ def refresh_round_anchor(progress: Any,
     """Refresh Progress.baseline_* after a normal optimization round.
 
     Sticky reuse is preferred while the stored fingerprint matches the
-    current config. When a mismatch forced formal eval to re-run ref
+    current config. When a mismatch forced eval_request to re-run ref
     profiling and the round returns a fresh ref_latency_us, we re-anchor
     here so future rounds become sticky again. When baseline_metric is
     still None (SEED couldn't produce ref), the first round with a valid

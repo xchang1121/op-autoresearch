@@ -1,0 +1,2 @@
+"""Reusable autoresearch framework primitives."""
+

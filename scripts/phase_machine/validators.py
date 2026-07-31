@@ -12,20 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Kernel / plan validators + plan.md parser.
+"""Plan/diagnose validators + plan.md parser.
 
 Validators (each: "is this artifact OK enough to advance the phase?"):
 
-  - validate_kernel: DSL-aware static check (delegates to
-    engine.quick_check, which uses CodeChecker).
   - validate_plan: structural check on plan.md (≥3 items, rationale length,
     exactly one ACTIVE).
   - validate_diagnose: marker + sections on diagnose_v<N>.md.
 
 Reference validation lives elsewhere: the AST symbol check is in
 [utils/ref_ast.py](../utils/ref_ast.py) and runs once at scaffold time;
-runtime behaviour is validated by scaffold's `--run-baseline`; the
-formal verifier path tags `error_source="ref"` on ref-side failure.
+runtime behaviour is validated by scaffold's `--run-baseline` (run_verify
+in eval_kernel.py tags `error_source="ref"` on ref-side failure).
 
 Plan.md parsing (`parse_plan_text`, `get_plan_items`, `has_pending_items`,
 `get_active_item`, `is_settled_table_header`) is the single source of
@@ -34,18 +32,8 @@ and pipeline.py's inlined settle step all consume it from here.
 """
 import os
 import re
-import sys
 from typing import NamedTuple, Optional
 
-# Sibling-module imports inside the package: state_store gives us paths,
-# phase constants, etc. The subprocess JSON-tail parser is the shared
-# utility in utils.json_io.
-import os as _os
-import sys as _sys
-_scripts_dir = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
-if _scripts_dir not in _sys.path:
-    _sys.path.insert(0, _scripts_dir)
-from utils.json_io import parse_last_json_line  # noqa: E402
 from .state_store import (  # noqa: E402
     plan_path,
     diagnose_artifact_path, diagnose_marker,
@@ -54,62 +42,12 @@ from .state_store import (  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
-# Kernel static check (DSL-aware CodeChecker)
-# ---------------------------------------------------------------------------
-
-def validate_kernel(task_dir: str) -> tuple:
-    """Static check on every editable file (typically kernel.py).
-
-    Delegates to quick_check.check_editable_files (the public lib API —
-    same call the quick_check CLI makes). The check runs CodeChecker on
-    editable source files and applies the policy for the configured DSL.
-
-    Never raises. Returns (True, "") on success, (False, reason) otherwise.
-    """
-    # quick_check + task_config live in scripts/ (one level up).
-    _scripts_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if _scripts_dir not in sys.path:
-        sys.path.insert(0, _scripts_dir)
-
-    try:
-        from task_config import load_task_config
-    except Exception as e:
-        return False, f"cannot import task_config: {e}"
-
-    config = load_task_config(task_dir)
-    if config is None:
-        return False, "task.yaml not found or invalid"
-
-    for fname in config.editable_files:
-        fpath = os.path.join(task_dir, fname)
-        if not os.path.exists(fpath):
-            return False, f"editable file missing: {fname}"
-
-    try:
-        from engine.quick_check import check_editable_files
-    except Exception as e:
-        return False, f"cannot import quick_check: {e}"
-
-    try:
-        issues = check_editable_files(task_dir, config)
-    except Exception as e:
-        return False, f"CodeChecker crashed: {e}"
-
-    if not issues:
-        return True, ""
-
-    parts = []
-    for it in issues:
-        parts.append(f"- {it.get('file', '?')}: {it.get('report', '(no report)')}")
-    return False, "CodeChecker found issues:\n" + "\n".join(parts)
-
-
-# ---------------------------------------------------------------------------
 # plan.md parser + structural validation
 # ---------------------------------------------------------------------------
 
 _PLAN_ITEM_RE = re.compile(r'\s*-\s*\[([ x])\]\s*\*\*(\w+)\*\*\s*(.*)')
 _PLAN_TAG_RE = re.compile(r'^\[([^\]]*)\]:?\s*(.*)')
+_PLAN_SKILL_RE = re.compile(r"[\w.-]+[/\\]SKILL\.md\b", re.IGNORECASE)
 
 
 def is_settled_table_header(line: str) -> bool:
@@ -127,7 +65,7 @@ def is_settled_table_header(line: str) -> bool:
 def parse_plan_text(text: str, include_meta: bool = False) -> list:
     """Canonical plan.md parser, on already-loaded text. Returns
     [{id, description, done, active, tag}, ...]. With include_meta=True
-    also captures the `- rationale:` sub-line.
+    also captures the `- rationale:` and `- skill:` sub-lines.
 
     Every plan reader in the codebase must go through this function or
     `get_plan_items` — no ad-hoc regex scans (drift risk)."""
@@ -155,11 +93,14 @@ def parse_plan_text(text: str, include_meta: bool = False) -> list:
 
         if include_meta:
             rationale = ""
+            skill = ""
             j = i + 1
             while j < len(lines):
                 sub = lines[j].strip()
                 if sub.startswith("- rationale:"):
                     rationale = sub.split(":", 1)[1].strip()
+                elif sub.startswith("- skill:"):
+                    skill = sub.split(":", 1)[1].strip()
                 elif sub.startswith("- ") and not sub.startswith("- ["):
                     # other sub-fields (hand-written notes) are skipped
                     # silently
@@ -168,6 +109,7 @@ def parse_plan_text(text: str, include_meta: bool = False) -> list:
                     break
                 j += 1
             item["rationale"] = rationale
+            item["skill"] = skill
 
         out.append(item)
         i += 1
@@ -190,10 +132,12 @@ def has_pending_items(task_dir: str) -> bool:
 
 
 def get_active_item(task_dir: str) -> Optional[dict]:
-    """Return the (ACTIVE) pending item, or None. Thin wrapper over get_plan_items."""
-    for it in get_plan_items(task_dir):
+    """Return the (ACTIVE) pending item, or None. include_meta=True so the
+    item carries its bound `skill` for EDIT guidance."""
+    for it in get_plan_items(task_dir, include_meta=True):
         if it["active"] and not it["done"]:
-            return {"id": it["id"], "description": it["description"]}
+            return {"id": it["id"], "description": it["description"],
+                    "skill": it.get("skill", "")}
     return None
 
 
@@ -318,6 +262,10 @@ def validate_plan(task_dir: str) -> tuple:
             return False, f"Item {it['id']}: rationale too short ({len(rat)} chars, need ≥ 30)"
         if len(rat) > 400:
             return False, f"Item {it['id']}: rationale too long ({len(rat)} chars, max 400)"
+
+        skill = it.get("skill", "")
+        if not _PLAN_SKILL_RE.search(skill):
+            return False, f"Item {it['id']}: skill must be `<skill-dir>/SKILL.md`"
 
     active_items = [it for it in pending if it["active"]]
     if len(active_items) != 1:
